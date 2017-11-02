@@ -80,9 +80,9 @@ dbDisconnect(con)
 
 # transform eo88 data ##########################################################
 
-
 # clean up eo88 names
 names(eo88) <- str_replace_all(names(eo88), " ", "")
+
 # rename fields
 eo88 <- eo88 %>% 
   rename(Parent = ParentESPLocationID,
@@ -102,3 +102,6 @@ eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
                         Start, End, Fuel, Units, Use, Demand, Cost)
 # remove missing usage rows
 eo88 <- drop_na(eo88, Use)
+
+
+
