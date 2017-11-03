@@ -14,52 +14,33 @@ output:
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, comment = NA, fig.align = "center")
 ```
 
-## Background
+# Background
 On December 28, 2012, New York Governor Andrew Cuomo issued [Executive Order 88](http://www.governor.ny.gov/news/no-88-directing-state-agencies-and-authorities-improve-energy-efficiency-state-buildings) requiring that
 
-  > By April 1, 2020, all Affected State Entities shall collectively reduce the average EUI [Energy Use Intensity] in State-owned and managed buildings by at least 20% from a baseline of the average EUI of such buildings for State fiscal year 2010/2011
+  > By April 1, 2020 ... State Entities shall collectively reduce the average EUI [Energy Use Intensity] ... by at least 20% from a baseline of the average EUI ... for State fiscal year 2010/2011
 
-The [New York Power Authority](https://www.nypa.gov) was charged with establishing a central management and implementation team to administer the executive order, directed and authorized to (among other responsibilities):
-
-  - Take all appropriate measures to ensure that the order's target is met
-  - Direct Affected State Entities to comply with the requirements of this order
-  - Provide strategic, technical, and other assistance to each entity to support implementation
-  - Develop annual milestones for achieving the target
-  - Develop and implement reporting requirements to document each entity's progress toward the target
-  - Develop a comprehensive operations and maintenance plan for the State's building portfolio to help achieve no cost and low cost efficiency improvements and ensure that efficiency savings are sustained
-
-The Executive Order (EO88) led to the creation of NYPA's [BuildSmart NY](https://www.nypa.gov/innovation/programs/buildsmart-ny) program.  BuildSmart NY is a key part of Governor Cuomo's [Reforming the Energy vision](https://rev.ny.gov/) energy strategy and is the premier energy efficiency program referenced in the [2015 New York State Energy Plan](https://energyplan.ny.gov/Plans/2015.aspx).
+The [New York Power Authority](https://www.nypa.gov) (NYPA) was charged with establishing a management and implementation team to administer the executive order, directed to ensure agencies' compliance by implementing reporting requirements to document progress toward the target.  In order to track performance against baselines, NYPA's [BuildSmart NY](https://www.nypa.gov/innovation/programs/buildsmart-ny) team collects utility bill information for all fuels (e.g. electricity, natural gas, and water) for all covered facilities as compared to the square footage of each facility.  This information is reported by each agency and submitted to NYPA in the form of an Excel spreadsheet template.  
 
 
-### Problem Description
-In order to track state entities' performance against their 2010/2011 baseline, NYPA collects utility bill information for both electricity and all other fuels (natural gas, propane, water, steam, oil, etc.) for all covered facilities and compares usage to the square footage of each facility.  This information is reported by each agency and submitted to NYPA in the form of an Excel spreadsheet template.
+## Challenges
+Agencies are responsible for performing their own data validation --- the performance of this task has proved incomplete.  Many facilities have missing data for the baseline year, as well as showing large spikes or dips in reported usage believed to be due to data entry errors.  NYPA must ensure accurate data is used for the establishment of baselines and the tracking and reporting of performance.
 
-Presently, agencies are responsible for performing their own data validation --- the performance of this task has proved incomplete.  Many facilities have shown an increase in reported EUI relative to the baseline year -- this has, on investigation, been shown to be due to missing reported data for the baseline year.  Additionally, some facilities have been observed to show rather large spikes or dips in their reported data -- these are believed to be due to data entry errors and have been excluded from reporting.
+EO88 reporting data has been hosted by a software vendor responsible for the the creation and maintenance of NYPA's [New York Energy Manager](https://www.nypa.gov/services/digital-energy-services/ny-energy-manager) (NYEM) platform.  The current structure of the data provides a great deal of redundancy and unused columns, harming the efficiency of computations based on this data.  Finally, the vendor's platform has been unable to properly handle the quality issues of reported data.
 
-In order to meet its reporting requirements for Executive Order 88, NYPA must ensure accurate data is used for the establishment of baselines, and must continue to ensure that reported data is feasible and not the result of data entry errors.  With the accuracy of the data ensured, the accuracy of performance reports can be enhanced.
-
-Presently, the [annual EO88 report](https://www.nypa.gov/-/media/nypa/documents/document-library/operations/eo88-annualreport-2016.pdf) produced by the BuildSmart NY team identifies performance at the state, agency, and facility levels, but does not sufficiently highlight trends in the data.  The use of advanced analytics will enable the identification of commonalities or differences in performance by facility characteristics to allow for the development of new energy service offerings to help customer meet their required energy reductions.
-
-The data is hosted on a multi-tenant database owned by a software partner that NYPA initially partnered with in 2013.  The vendor has provided extracts of the data, which is organized in a schema that provides a great deal of redundancy and unused database columns; this harms the efficiency of computations based on this data.  Further, the data is currently stored in a "wide" format, with each facility having one row for each fiscal year, containing hundreds of variables (multiple units across many fuels), making analysis more cumbersome.  Finally, the vendor's platform has been unable to properly handle the quality issues of reported data.
+Finally, the NYEM platform and the [annual EO88 report](https://www.nypa.gov/-/media/nypa/documents/document-library/operations/eo88-annualreport-2016.pdf) produced by the BuildSmart NY team identify performance at agency and facility levels, but do not sufficiently highlight trends in the data, nor serve to identify performance by facility characteristics to allow for the development of new energy service offerings to help customer meet their required energy reductions.
 
 
+## Expected Approaches \& Required Delivery
+In order to emable expanded analysis, the data will be converted to a "tidy" format and stored in a properly normalized SQL database, as the volume of data may make in-memory storage impractical.  The database may be operationalized by NYPA; Microsoft SQL Server will be utilized to match NYPA's enterprise architecture.  The analyses for this project (conducted in R), may be leveraged into enterprise data integration and visalization softwares to allow automated ingestion into a cloud platform.
 
-### Expected Approaches \& Required Delivery
-
-The method for handling of missing data has not yet been determined, but it is expected that values will be imputed reported data for a given facility using other reported values for that facility, in combination with data for facilities of similar size and type, along with weather data.  The NYEM platform provides weather data through its portal -- this will be used if possible, otherwise another appropriate source of weather data will be identified.  A method for flagging possibly-abberant data will also be established, likely based on percentage change from previous months.  Those data points flagged as potential errors will be compared to values from the same imputation method for missing data -- if there is an intolerable difference between the reported and calculated values, the reported value will be deemed an error and replaced with the imputed value; otherwise the reported data will be deemed feasible and remain.
-
-<!--  expand NYEM explanation -->
-
-In order to allow for filtering of analysis by facility characteristics and fuels, the data will be converted to more condensed format, following the "tidy data" principles proposed by [Hadley Wickham](http://vita.had.co.nz/papers/tidy-data.pdf).  This transformed data will be stored in a properly normalized SQL database.  This is required for two reasons: first, the volume of data makes in-memory storage of the entire dataset impractical; second, the data transformation and migration will be operationalized by NYPA, and it is desired that the data be stored in a Microsoft SQL Server database.
-
-While the analysis for this project will be conducted entirely in R (interfacing with SQL Server), there may be a later migration to leverage the approach of this project into an enterprise ETL (extract, transform, & load) software to allow automated ingestion into a cloud platform.  Similarly, interactive analysis & insights potentially provided through R Shiny application may be migrated to Tableau to better fit into NYPA's enterprise architecture and minimize required infrastructure support.
-
+The method for handling of missing data has not yet been determined, but it is expected that values will be imputed for based on other reported values for each facility, in combination with data for similar facilities and weather data (possibly that provided through NYEM).  A method for flagging possibly-abberant data will also be established, likely based on change from previous months.
 
 ------------------------------------
 \newpage
 
-## Data Processing
-The data provided from the software vendor was provided in two files, one containing building data and the other containing reported consumption data.  These files are read into R:
+
+# Data Processing
+The data provided from the above-mentioned software vendor was provided in two files, one containing building data and the other containing reported consumption data.  These files are read into R:
 
 ```{r load-data}
 library(tidyverse)
@@ -68,7 +49,7 @@ bldg <- read_csv("data/2017-10-25_nyem-eo88_bldg-all-sfy.csv")
 eo88 <- read_csv("data/2017-10-26_nyem-eo88_consumption-all-sfy.csv")
 ```
 
-### Building Data
+## Building Data
 The structure of the building information dataset is investigated:
 ```{r summ-bldg}
 #devtools::install_github("ropenscilabs/skimr")
@@ -115,24 +96,28 @@ bldg_sfy  <- bldg %>% select(ESPLocationID, SFY:`WeeklyOperatingHours(Hours/Week
 ```
 
 
-#### Fixed Building Metadata
+### Fixed Building Metadata
 The building metadata requires only minor cleanup -- removing duplicate entries (arising from the repeating of these fields across fiscal years) and the renaming of fields
 ```{r clean-bldg-meta}
 # remove duplicates
 bldg_meta <- distinct(bldg_meta)
 
-# rename fields
+# rename & reorder fields
 bldg_meta <- bldg_meta %>% 
-  rename(Agency = AgencyName,
+  rename(Name = BuildingName,
+         Agency = AgencyName,
          ClimateRegion = NYSNOAAClimateRegion,
-         Name = BuildingName,
          Address = BuildingAddress,
          City = BuildingCity,
-         ZipCode = BuildingZipCode)
+         ZipCode = BuildingZipCode,
+         Included = Status)
+
+# convert included field to boolean
+bldg_meta$Included <- bldg_meta$Included == "included"
 ```
 
 
-#### Variable Building Data
+### Variable Building Data
 Building data varying across fiscal years requires additional cleanup, as the names of fields are lengthy and not all variables are stored as the correct data type due to earlier transformations.
 
 ```{r clean-bldg-sfy}
@@ -169,3 +154,59 @@ skimr::skim(bldg_meta)
 skimr::skim(bldg_sfy)
 ```
 
+## Creation of Database
+With the building data properly handled, the SQL Server database is created and populated with the two tables:
+```{r create-db}
+library(DBI)
+library(odbc)
+
+# connect to local SQL Server instance
+con <- dbConnect(odbc(), Driver = "{SQL Server}", Server = Sys.getenv("USERDOMAIN"))
+
+# create EO88 db
+dbSendQuery(con, "DROP DATABASE IF EXISTS EO88;")
+dbSendQuery(con, "CREATE DATABASE EO88;")
+dbSendQuery(con, "USE EO88;")
+
+# write two building tables
+dbWriteTable(con, "building_fixed", bldg_meta, row.names = FALSE)
+dbWriteTable(con, "building_variable", bldg_sfy, row.names = FALSE)
+
+# disconnect from server for sanitation while working on eo88 data
+dbDisconnect(con)
+```
+
+
+## Consumption Data
+The structure of the EO88 reported consumption data is investigated:
+```{r str-eo88}
+str(eo88, give.attr = FALSE)
+```
+
+The `bldg` data frame contains roughly 177,000 rows and 16 columns -- the first seven of these contain data also included in the `bldg_meta` dataframe -- these are removed to enforce normalization, with the exception of ESP Location ID, which is the unique identifier used to join the two tables.  The fuel and units measures are also split into separate columns:
+```{r clean-eo88}
+# clean up eo88 names
+names(eo88) <- str_replace_all(names(eo88), " ", "")
+
+# rename fields
+eo88 <- eo88 %>% 
+  rename(Parent = ParentESPLocationID,
+         FuelUnits = `FuelType(units)`,
+         Start = BillingPeriodStart,
+         End = BillingPeriodEnd,
+         Utility = UtilityProvider,
+         Demand = `Demand(kW)`)
+
+# split fuel type & units
+eo88 <- eo88 %>%
+  mutate(Fuel = str_split(FuelUnits, " \\(", simplify = TRUE)[, 1],
+         Units = str_split(FuelUnits, " \\(", simplify = TRUE)[, 2],
+         Units = str_replace_all(Units, "\\)", "")) %>% 
+  select(-FuelUnits)
+
+# remove missing usage rows
+eo88 <- drop_na(eo88, Use)
+```
+
+### Date Normalization
+Before the EO88 reporting data can be added to the database and used for analysis, the billing dates will need to be converted to match calendar months.

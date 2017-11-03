@@ -33,9 +33,9 @@ bldg_sfy  <- bldg %>% select(ESPLocationID, Status, SFY:`WeeklyOperatingHours(Ho
 # metadata cleanup: remove duplicates from SFY & rename fields
 bldg_meta <- distinct(bldg_meta)
 bldg_meta <- bldg_meta %>% 
-  rename(Agency = AgencyName,
+  rename(Name = BuildingName,
+         Agency = AgencyName,
          ClimateRegion = NYSNOAAClimateRegion,
-         Name = BuildingName,
          Address = BuildingAddress,
          City = BuildingCity,
          ZipCode = BuildingZipCode)
