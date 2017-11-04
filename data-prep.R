@@ -103,5 +103,22 @@ eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
 # remove missing usage rows
 eo88 <- drop_na(eo88, Use)
 
+# investigate billing month distribution
+library(lubridate)
+eo88 %>% select(Start, End) %>% mutate_all(day) %>%
+  ggplot(aes(x = Start, y = End)) +
+  stat_bin_2d() +
+  scale_fill_distiller(trans = "log10", breaks = c(1, 10, 100, 1000, 10000),
+                      labels = c(1, 10, 100, "1k", "10k"), palette = "Reds", direction = 1, na.value = "black") +
+  labs(title = "Reported billing cycle start & end day of month",
+       subtitle = "Count of occurences with given start & end day",
+       x = "Bill start", y = "Bill end", fill = NULL) +
+  theme_minimal() +
+  theme(legend.direction = "horizontal", legend.position = c(0.9, 1.15),
+        legend.justification = c(1, 1), legend.background = element_blank())
 
-
+# investigate fuel & unit distribution
+eo88 %>%
+  group_by(Fuel, Units) %>%
+  summarize(Count = n()) %>%
+  arrange(desc(Count))
