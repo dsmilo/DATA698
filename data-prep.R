@@ -122,3 +122,45 @@ eo88 %>%
   group_by(Fuel, Units) %>%
   summarize(Count = n()) %>%
   arrange(desc(Count))
+
+# function to prorate billed dates to calendar dates & number of days in month
+bill_to_cal <- function(start_dt, end_dt) {
+  # create sequence of months
+  tibble(Month = seq.Date(floor_date(start_dt, "m"), floor_date(end_dt, "m"), "m")) %>% 
+    # get # days in month
+    ## same month: number of days in period (adding 1 to include first day)
+    ## start month: days in start month - day of month (adding 1 to include first day)
+    ## end month: day of end date
+    ## between months: days in month (for periods that span > 2 months)
+    mutate(
+      Days = case_when(
+        month(start_dt) == month(end_dt) ~ day(end_dt) - day(start_dt) + as.integer(1),
+        Month == floor_date(start_dt, "m") ~ days_in_month(start_dt) - day(start_dt) + as.integer(1),
+        Month == floor_date(end_dt, "m") ~ day(end_dt),
+        TRUE ~ days_in_month(Month)),
+      # get share of days in each month to scale reported values
+      Share = Days / sum(Days))
+}
+
+
+# convert billed values to calendar month values
+eo88 <- eo88 %>% 
+  mutate(cal_month = map2(Start, End, bill_to_cal)) %>% 
+  unnest() %>% 
+  mutate(Use = Use * Share,
+         Cost = Cost * Share) %>% 
+  select(-Start, -End, -Days, -Share) %>% 
+  # aggregate totals by calendar month across different billing cycles
+  group_by(-Demand, -Use, -Cost) %>% 
+  mutate(Demand = max(Demand, na.rm = TRUE),
+         Use = sum(Use, na.rm = TRUE),
+         Cost = sum(Cost, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  # add SFY
+  mutate(SFY = ifelse(month(Month) >= 4,
+                      paste(year(Month), str_sub(year(Month) + 1, -2, -1), sep = "-"),
+                      paste(year(Month) - 1, str_sub(year(Month), -2, -1), sep = "-")))
+  
+
+
+
