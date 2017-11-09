@@ -76,9 +76,7 @@ dbWriteTable(con, "building_filingdata", bldg_sfy, row.names = FALSE)
 dbDisconnect(con)
 
 
-
-
-# transform eo88 data ##########################################################
+# tidy eo88 data ###############################################################
 
 # clean up eo88 names
 names(eo88) <- str_replace_all(names(eo88), " ", "")
@@ -102,6 +100,9 @@ eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
                         Start, End, Fuel, Units, Use, Demand, Cost)
 # remove missing usage rows
 eo88 <- drop_na(eo88, Use)
+
+
+# map bill data to sfy #########################################################
 
 # investigate billing month distribution
 library(lubridate)
@@ -142,7 +143,6 @@ bill_to_cal <- function(start_dt, end_dt) {
       Share = Days / sum(Days))
 }
 
-
 # convert billed values to calendar month values
 eo88 <- eo88 %>% 
   mutate(cal_month = map2(Start, End, bill_to_cal)) %>% 
@@ -151,7 +151,7 @@ eo88 <- eo88 %>%
          Cost = Cost * Share) %>% 
   select(-Start, -End, -Days, -Share) %>% 
   # aggregate totals by calendar month across different billing cycles
-  group_by(-Demand, -Use, -Cost) %>% 
+  group_by(ESPLocationID, Parent, Utility, AccountNumber, Fuel, Units, Month) %>% 
   mutate(Demand = max(Demand, na.rm = TRUE),
          Use = sum(Use, na.rm = TRUE),
          Cost = sum(Cost, na.rm = TRUE)) %>% 
@@ -162,5 +162,36 @@ eo88 <- eo88 %>%
                       paste(year(Month) - 1, str_sub(year(Month), -2, -1), sep = "-")))
   
 
+# convert to kBtu & source energy ##############################################
+
+# read in converstion tables (adapted from epa portfolio mgr)
+mult_kBtu <- read_csv("data/2017-11-08_epa-portfolio-mgr_kbtu-multipliers.csv")
+## https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
+### conversion for gallons & tons varied by fuel; joined with pipe
+mult_source <- read_csv("data/2017-11-08_epa-portfolio-mgr_source-multipliers.csv")
+## https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf
+### no value for electricity cogen or electricity other; used 1
+
+# convert to source kBtu
+eo88 <- eo88 %>% 
+  # get source energy multiplier
+  left_join(mult_source, by = "Fuel") %>% 
+  # get temporary unit since gallon & tons vary by fuel
+  mutate(tmp_unit = ifelse(Units %in% c("gallons", "tons"), paste(Units, Fuel, sep = "|"), Units)) %>% 
+  # get kBtu multiplier
+  left_join(mult_kBtu, by = c("tmp_unit" = "Units")) %>% 
+  # convert to source energy
+  mutate(SourceEnergy = Use * kBtuMult * SourceMult) %>% 
+  # drop intermediate variables
+  select(-tmp_unit, -kBtuMult, -SourceMult)
 
 
+# write eo88 data to db ########################################################
+con <- dbConnect(odbc(), Driver = "SQL Server",
+                 Server = Sys.getenv("USERDOMAIN"), Database = "EO88")
+# issue with demand; remove & investigate later if needed
+dbWriteTable(con, "consumption", eo88 %>% select(-Demand), row.names = FALSE)
+dbDisconnect(con)
+
+# save processed data for replicability
+save(bldg_meta, bldg_sfy, eo88, file = "data/eo88.Rda")
