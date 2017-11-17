@@ -15,13 +15,13 @@ bldg <- bldg %>%
          `SFY2010-11 Gross Floor Area (ft2)`:
            `SFY2016-17 Property Type 5 Percent of Total Gross Floor Area`)
 # separate FY from actual measure
-bldg <- bldg %>% 
+bldg <- bldg %>%
   mutate(SFY = str_sub(Field, end = 10),
          Field = str_sub(Field, start = 12))
 # remove duplicate entries per FY & ESP ID (unique identifier)
 bldg <- bldg %>% distinct(`ESP Location ID`, SFY, Field, .keep_all = TRUE)
 # spread FY-based fields
-bldg <- bldg %>% 
+bldg <- bldg %>%
   spread(Field, Value)
 # clean up bldg names
 names(bldg) <- str_replace_all(names(bldg), " ", "")
@@ -32,7 +32,7 @@ bldg_sfy  <- bldg %>% select(ESPLocationID, Status, SFY:`WeeklyOperatingHours(Ho
 
 # metadata cleanup: remove duplicates from SFY & rename fields
 bldg_meta <- distinct(bldg_meta)
-bldg_meta <- bldg_meta %>% 
+bldg_meta <- bldg_meta %>%
   rename(Name = BuildingName,
          Agency = AgencyName,
          ClimateRegion = NYSNOAAClimateRegion,
@@ -61,10 +61,10 @@ bldg_sfy <- mutate_at(bldg_sfy,
 
 
 # set up db & write building data ##############################################
-library(DBI)
+library(RMySQL)
 library(odbc)
-# connect to local SQL Server instance
-con <- dbConnect(odbc(), Driver = "{SQL Server}", Server = Sys.getenv("USERDOMAIN"))
+# connect to local MySQL environment
+con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
 # create EO88 db
 dbSendQuery(con, "DROP DATABASE IF EXISTS EO88;")
 dbSendQuery(con, "CREATE DATABASE EO88;")
@@ -82,24 +82,48 @@ dbDisconnect(con)
 names(eo88) <- str_replace_all(names(eo88), " ", "")
 
 # rename fields
-eo88 <- eo88 %>% 
+eo88 <- eo88 %>%
   rename(Parent = ParentESPLocationID,
          FuelUnits = `FuelType(units)`,
          Start = BillingPeriodStart,
          End = BillingPeriodEnd,
          Utility = UtilityProvider,
          Demand = `Demand(kW)`)
+
+# read in converstion table to source kBtu (adapted from epa portfolio mgr)
+eui_conv <- read_csv("data/2017-11-13_epa-portfolio-mgr_conversion-factors.csv")
+## https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
+## https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf
+
+# convert to source kBtu
+eo88 <- eo88 %>%
+  # get multipliers
+  left_join(eui_conv, by = "FuelUnits") %>%
+  # convert to source energy
+  mutate(Use = Use * kBtu_mult * source_mult) %>%
+  # drop multipliers
+  select(-kBtu_mult, -source_mult)
+
 # split fuel type & units
 eo88 <- eo88 %>%
   mutate(Fuel = str_split(FuelUnits, " \\(", simplify = TRUE)[, 1],
          Units = str_split(FuelUnits, " \\(", simplify = TRUE)[, 2],
-         Units = str_replace_all(Units, "\\)", "")) %>% 
-  select(-FuelUnits)
+         Units = str_replace_all(Units, "\\)", ""))
+
 # remove duplicated bldg data (& empty rate/sc) -- retrieve using esp id
 eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
                         Start, End, Fuel, Units, Use, Demand, Cost)
-# remove missing usage rows
-eo88 <- drop_na(eo88, Use)
+
+# remove data for irrelevant facilities with parent esp 5106
+eo88 <- eo88 %>%
+  filter(Parent != 5106)
+
+# some sites went from building to campus reporting & are not in bldg_meta
+# replace these (only sites not in bldg_meta) with parent ESP
+eo88 <- eo88 %>%
+  mutate(ESPLocationID = ifelse(ESPLocationID %in% bldg_meta$ESPLocationID,
+                                ESPLocationID, Parent)) %>%
+  select(-Parent)
 
 
 # map bill data to sfy #########################################################
@@ -110,7 +134,8 @@ eo88 %>% select(Start, End) %>% mutate_all(day) %>%
   ggplot(aes(x = Start, y = End)) +
   stat_bin_2d() +
   scale_fill_distiller(trans = "log10", breaks = c(1, 10, 100, 1000, 10000),
-                      labels = c(1, 10, 100, "1k", "10k"), palette = "Reds", direction = 1, na.value = "black") +
+                      labels = c(1, 10, 100, "1k", "10k"),
+                      palette = "Reds", direction = 1, na.value = "black") +
   labs(title = "Reported billing cycle start & end day of month",
        subtitle = "Count of occurences with given start & end day",
        x = "Bill start", y = "Bill end", fill = NULL) +
@@ -127,7 +152,7 @@ eo88 %>%
 # function to prorate billed dates to calendar dates & number of days in month
 bill_to_cal <- function(start_dt, end_dt) {
   # create sequence of months
-  tibble(Month = seq.Date(floor_date(start_dt, "m"), floor_date(end_dt, "m"), "m")) %>% 
+  tibble(Month = seq.Date(floor_date(start_dt, "m"), floor_date(end_dt, "m"), "m")) %>%
     # get # days in month
     ## same month: number of days in period (adding 1 to include first day)
     ## start month: days in start month - day of month (adding 1 to include first day)
@@ -145,52 +170,70 @@ bill_to_cal <- function(start_dt, end_dt) {
 
 # convert billed values to calendar month values
 eo88 <- eo88 %>% 
-  mutate(cal_month = map2(Start, End, bill_to_cal)) %>% 
-  unnest() %>% 
-  mutate(Use = Use * Share,
-         Cost = Cost * Share) %>% 
-  select(-Start, -End, -Days, -Share) %>% 
-  # aggregate totals by calendar month across different billing cycles
-  group_by(ESPLocationID, Parent, Utility, AccountNumber, Fuel, Units, Month) %>% 
-  mutate(Demand = max(Demand, na.rm = TRUE),
-         Use = sum(Use, na.rm = TRUE),
-         Cost = sum(Cost, na.rm = TRUE)) %>% 
-  ungroup() %>% 
+  mutate(cal_month = map2(Start, End, bill_to_cal)) %>%
+  unnest() %>%
+  select(-Start, -End, -Days) %>%
   # add SFY
   mutate(SFY = ifelse(month(Month) >= 4,
                       paste(year(Month), str_sub(year(Month) + 1, -2, -1), sep = "-"),
                       paste(year(Month) - 1, str_sub(year(Month), -2, -1), sep = "-")))
-  
 
-# convert to kBtu & source energy ##############################################
 
-# read in converstion tables (adapted from epa portfolio mgr)
-mult_kBtu <- read_csv("data/2017-11-08_epa-portfolio-mgr_kbtu-multipliers.csv")
-## https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
-### conversion for gallons & tons varied by fuel; joined with pipe
-mult_source <- read_csv("data/2017-11-08_epa-portfolio-mgr_source-multipliers.csv")
-## https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf
-### no value for electricity cogen or electricity other; used 1
+# detect & fill missing or abberant values #####################################
 
-# convert to source kBtu
-eo88 <- eo88 %>% 
-  # get source energy multiplier
-  left_join(mult_source, by = "Fuel") %>% 
-  # get temporary unit since gallon & tons vary by fuel
-  mutate(tmp_unit = ifelse(Units %in% c("gallons", "tons"), paste(Units, Fuel, sep = "|"), Units)) %>% 
-  # get kBtu multiplier
-  left_join(mult_kBtu, by = c("tmp_unit" = "Units")) %>% 
-  # convert to source energy
-  mutate(SourceEnergy = Use * kBtuMult * SourceMult) %>% 
-  # drop intermediate variables
-  select(-tmp_unit, -kBtuMult, -SourceMult)
+# create function to detect outliers
+is.outlier <- function(out_var) {
+  out_var < quantile(out_var, 0.25, na.rm = TRUE) - 1.5 * IQR(out_var, na.rm = TRUE) |
+    out_var > quantile(out_var, 0.75, na.rm = TRUE) + 1.5 * IQR(out_var, na.rm = TRUE)
+}
 
+# flag values needing imputation (missing or outlier)
+eo88 <- eo88 %>%
+  group_by(ESPLocationID, Fuel, Units) %>%
+  mutate(Imputed = is.na(Use) | is.outlier(Use)) %>%
+  ungroup()
+
+# get lookup values for climate regions
+regions <- data_frame(
+  Division = 1:10,
+  ClimateRegion = c("Western Plateau", "Eastern Plateau", "Northern Plateau",
+                    "Coastal", "Hudson Valley", "Mohawk Valley", "Champlain Valley",
+                    "St. Lawrence Valley", "Great Lakes", "Central Lakes")
+)
+
+# read in NOAA weather data
+weather <- read_csv("data/2017-11-14_NOAA_CDODiv3632687483443.txt",
+                    col_types = "iicnnnnnniinnnnnnnnn?")
+## https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
+
+# convert weather YearMonth to date; drop extra columns
+weather <- weather %>%
+  mutate(YearMonth = ymd(paste0(YearMonth, "01"))) %>%
+  rename(Month = YearMonth) %>%
+  select(-StateCode, -X21)
+
+# join weather to reporting data
+eo88_2 <- eo88 %>%
+  left_join(bldg_meta, by = "ESPLocationID") %>%
+  left_join(regions, by = "ClimateRegion") %>%
+  left_join(weather, by = c("Division", "Month"))
+
+
+# aggregate totals by calendar month across different billing cycles
+group_by(ESPLocationID, Parent, Utility, AccountNumber, Fuel, Month) %>%
+  mutate(Demand = max(Demand, na.rm = TRUE),
+         Use = Use * Share,
+         Cost = Cost * Share,
+         Use = sum(Use, na.rm = TRUE),
+         Cost = sum(Cost, na.rm = TRUE)) %>%
+  select(-Share) %>%
+  ungroup()
 
 # write eo88 data to db ########################################################
 con <- dbConnect(odbc(), Driver = "SQL Server",
-                 Server = Sys.getenv("USERDOMAIN"), Database = "EO88")
+                 Server = Sys.info()[["nodename"]], Database = "EO88")
 # issue with demand; remove & investigate later if needed
-dbWriteTable(con, "consumption", eo88 %>% select(-Demand), row.names = FALSE)
+dbWriteTable(con, "consumption_filingdata", eo88 %>% select(-Demand), row.names = FALSE)
 dbDisconnect(con)
 
 # save processed data for replicability
