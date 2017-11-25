@@ -169,7 +169,7 @@ bill_to_cal <- function(start_dt, end_dt) {
 }
 
 # convert billed values to calendar month values
-eo88 <- eo88 %>% 
+eo88 <- eo88 %>%
   mutate(cal_month = map2(Start, End, bill_to_cal)) %>%
   unnest() %>%
   select(-Start, -End, -Days) %>%
@@ -178,8 +178,11 @@ eo88 <- eo88 %>%
                       paste(year(Month), str_sub(year(Month) + 1, -2, -1), sep = "-"),
                       paste(year(Month) - 1, str_sub(year(Month), -2, -1), sep = "-")))
 
+# remove months before SFY 10-11 & after FY 16-17
+eo88 <- eo88 %>%
+  filter(Month >= ymd("20100401"), Month <= ymd("20170331"))
 
-# detect & fill missing or abberant values #####################################
+# detect missing or abberant values; prep for imputation  #####################
 
 # create function to detect outliers
 is.outlier <- function(out_var) {
@@ -190,9 +193,11 @@ is.outlier <- function(out_var) {
 # flag values needing imputation (missing or outlier)
 eo88 <- eo88 %>%
   group_by(ESPLocationID, Fuel, Units) %>%
-  mutate(Imputed = is.na(Use) | is.outlier(Use)) %>%
+  mutate(Imputed = is.na(Use) | is.outlier(Use) | Use < 0) %>%
   ungroup()
 
+
+# import weather data for imputation ###########################################
 # get lookup values for climate regions
 regions <- data_frame(
   Division = 1:10,
@@ -202,7 +207,7 @@ regions <- data_frame(
 )
 
 # read in NOAA weather data
-weather <- read_csv("data/2017-11-14_NOAA_CDODiv3632687483443.txt",
+weather <- read_csv("data/2017-11-14_NOAA_cdo-div-weather-indices.txt",
                     col_types = "iicnnnnnniinnnnnnnnn?")
 ## https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
 
@@ -212,12 +217,18 @@ weather <- weather %>%
   rename(Month = YearMonth) %>%
   select(-StateCode, -X21)
 
-# join weather to reporting data
-eo88_2 <- eo88 %>%
-  left_join(bldg_meta, by = "ESPLocationID") %>%
-  left_join(regions, by = "ClimateRegion") %>%
-  left_join(weather, by = c("Division", "Month"))
+# write weather db
+con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
+dbSendQuery(con, "USE EO88;")
+# write two weather tables
+dbWriteTable(con, "noaa_regions", regions, row.names = FALSE)
+dbWriteTable(con, "weather_monthly", weather, row.names = FALSE)
+# disconnect from server for sanitation while working on eo88 data
+dbDisconnect(con)
 
+
+# impute values requiring filling (not run) ####################################
+## see model-train.R for model training
 
 # aggregate totals by calendar month across different billing cycles
 group_by(ESPLocationID, Parent, Utility, AccountNumber, Fuel, Month) %>%
@@ -229,10 +240,9 @@ group_by(ESPLocationID, Parent, Utility, AccountNumber, Fuel, Month) %>%
   select(-Share) %>%
   ungroup()
 
-# write eo88 data to db ########################################################
-con <- dbConnect(odbc(), Driver = "SQL Server",
-                 Server = Sys.info()[["nodename"]], Database = "EO88")
-# issue with demand; remove & investigate later if needed
+# write eo88 data to db (not run) ##############################################
+con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
+dbSendQuery("USE EO88;")
 dbWriteTable(con, "consumption_filingdata", eo88 %>% select(-Demand), row.names = FALSE)
 dbDisconnect(con)
 
