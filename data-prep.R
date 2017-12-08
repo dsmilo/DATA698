@@ -227,22 +227,22 @@ dbWriteTable(con, "weather_monthly", weather, row.names = FALSE)
 dbDisconnect(con)
 
 
-# impute values requiring filling (not run) ####################################
-## see model-train.R for model training
+# impute values requiring filling ##############################################
+# write non-imputed values to db
+con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
+db <- dbSendQuery(con, "USE EO88;")
+dbFetch(db)
+dbWriteTable(con, "consumption_filingdata_asis", eo88, row.names = FALSE)
+dbDisconnect(con)
 
-# aggregate totals by calendar month across different billing cycles
-group_by(ESPLocationID, Parent, Utility, AccountNumber, Fuel, Month) %>%
-  mutate(Demand = max(Demand, na.rm = TRUE),
-         Use = Use * Share,
-         Cost = Cost * Share,
-         Use = sum(Use, na.rm = TRUE),
-         Cost = sum(Cost, na.rm = TRUE)) %>%
-  select(-Share) %>%
-  ungroup()
+# see model-train.R for attempted (unsuccesful) model training
+# see impute-missing.R for successful imputation
 
-# write eo88 data to db (not run) ##############################################
+
+# write eo88 data to db ########################################################
 con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
 dbSendQuery("USE EO88;")
+# issue with demand; remove & investigate later if needed
 dbWriteTable(con, "consumption_filingdata", eo88 %>% select(-Demand), row.names = FALSE)
 dbDisconnect(con)
 
