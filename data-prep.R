@@ -7,7 +7,7 @@ eo88 <- read_csv("data/2017-10-26_nyem-eo88_consumption-all-sfy.csv")
 
 
 # transform building data ######################################################
-library(stringr)
+library(stringr) # not necessary for tidyverse version >= 1.2
 
 # tidy data that changes by SFY
 bldg <- bldg %>%
@@ -90,6 +90,20 @@ eo88 <- eo88 %>%
          Utility = UtilityProvider,
          Demand = `Demand(kW)`)
 
+# split fuel type & units
+eo88 <- eo88 %>%
+  mutate(Fuel = str_split(FuelUnits, " \\(", simplify = TRUE)[, 1],
+         Units = str_split(FuelUnits, " \\(", simplify = TRUE)[, 2],
+         Units = str_replace_all(Units, "\\)", ""))
+
+# investigate fuel & unit distribution
+library(pander)
+eo88 %>%
+  group_by(Fuel, Units) %>%
+  summarize(Count = n()) %>%
+  arrange(desc(Count)) %>% 
+  pander()
+
 # read in converstion table to source kBtu (adapted from epa portfolio mgr)
 eui_conv <- read_csv("data/2017-11-13_epa-portfolio-mgr_conversion-factors.csv")
 ## https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
@@ -103,12 +117,6 @@ eo88 <- eo88 %>%
   mutate(Use = Use * kBtu_mult * source_mult) %>%
   # drop multipliers
   select(-kBtu_mult, -source_mult)
-
-# split fuel type & units
-eo88 <- eo88 %>%
-  mutate(Fuel = str_split(FuelUnits, " \\(", simplify = TRUE)[, 1],
-         Units = str_split(FuelUnits, " \\(", simplify = TRUE)[, 2],
-         Units = str_replace_all(Units, "\\)", ""))
 
 # remove duplicated bldg data (& empty rate/sc) -- retrieve using esp id
 eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
@@ -130,24 +138,20 @@ eo88 <- eo88 %>%
 
 # investigate billing month distribution
 library(lubridate)
-eo88 %>% select(Start, End) %>% mutate_all(day) %>%
+theme_set(theme_light())
+eo88 %>% select(Start, End) %>% 
+  mutate_all(day) %>%
   ggplot(aes(x = Start, y = End)) +
   stat_bin_2d() +
   scale_fill_distiller(trans = "log10", breaks = c(1, 10, 100, 1000, 10000),
                       labels = c(1, 10, 100, "1k", "10k"),
-                      palette = "Reds", direction = 1, na.value = "black") +
+                      direction = 1, na.value = "black") +
   labs(title = "Reported billing cycle start & end day of month",
        subtitle = "Count of occurences with given start & end day",
        x = "Bill start", y = "Bill end", fill = NULL) +
   theme_minimal() +
   theme(legend.direction = "horizontal", legend.position = c(0.9, 1.15),
         legend.justification = c(1, 1), legend.background = element_blank())
-
-# investigate fuel & unit distribution
-eo88 %>%
-  group_by(Fuel, Units) %>%
-  summarize(Count = n()) %>%
-  arrange(desc(Count))
 
 # function to prorate billed dates to calendar dates & number of days in month
 bill_to_cal <- function(start_dt, end_dt) {
@@ -182,50 +186,6 @@ eo88 <- eo88 %>%
 eo88 <- eo88 %>%
   filter(Month >= ymd("20100401"), Month <= ymd("20170331"))
 
-# detect missing or abberant values; prep for imputation  #####################
-
-# create function to detect outliers
-is.outlier <- function(out_var) {
-  out_var < quantile(out_var, 0.25, na.rm = TRUE) - 1.5 * IQR(out_var, na.rm = TRUE) |
-    out_var > quantile(out_var, 0.75, na.rm = TRUE) + 1.5 * IQR(out_var, na.rm = TRUE)
-}
-
-# flag values needing imputation (missing or outlier)
-eo88 <- eo88 %>%
-  group_by(ESPLocationID, Fuel, Units) %>%
-  mutate(Imputed = is.na(Use) | is.outlier(Use) | Use < 0) %>%
-  ungroup()
-
-
-# import weather data for imputation ###########################################
-# get lookup values for climate regions
-regions <- data_frame(
-  Division = 1:10,
-  ClimateRegion = c("Western Plateau", "Eastern Plateau", "Northern Plateau",
-                    "Coastal", "Hudson Valley", "Mohawk Valley", "Champlain Valley",
-                    "St. Lawrence Valley", "Great Lakes", "Central Lakes")
-)
-
-# read in NOAA weather data
-weather <- read_csv("data/2017-11-14_NOAA_cdo-div-weather-indices.txt",
-                    col_types = "iicnnnnnniinnnnnnnnn?")
-## https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
-
-# convert weather YearMonth to date; drop extra columns
-weather <- weather %>%
-  mutate(YearMonth = ymd(paste0(YearMonth, "01"))) %>%
-  rename(Month = YearMonth) %>%
-  select(-StateCode, -X21)
-
-# write weather db
-con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
-dbSendQuery(con, "USE EO88;")
-# write two weather tables
-dbWriteTable(con, "noaa_regions", regions, row.names = FALSE)
-dbWriteTable(con, "weather_monthly", weather, row.names = FALSE)
-# disconnect from server for sanitation while working on eo88 data
-dbDisconnect(con)
-
 
 # impute values requiring filling ##############################################
 # write non-imputed values to db
@@ -237,14 +197,6 @@ dbDisconnect(con)
 
 # see model-train.R for attempted (unsuccesful) model training
 # see impute-missing.R for successful imputation
-
-
-# write eo88 data to db ########################################################
-con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
-dbSendQuery("USE EO88;")
-# issue with demand; remove & investigate later if needed
-dbWriteTable(con, "consumption_filingdata", eo88 %>% select(-Demand), row.names = FALSE)
-dbDisconnect(con)
 
 # save processed data for replicability
 save(bldg_meta, bldg_sfy, eo88, file = "data/eo88.Rda")
