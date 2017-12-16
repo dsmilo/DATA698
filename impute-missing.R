@@ -1,3 +1,5 @@
+library(tidyverse)
+
 # investigate missing reported values ##########################################
 # set up variable to flag imputed & method
 eo88_imp <- eo88 %>% mutate(Imputed = "")
@@ -483,13 +485,6 @@ rf_imp <- complete(rf_imp) %>%
 # check consistency -- all equal except nas
 table(rf_data$Use == rf_imp$Use, useNA = "ifany")
 
-# write two weather tables to db ###############################################
-con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
-dbSendQuery(con, "USE EO88;")
-dbWriteTable(con, "noaa_regions", regions, row.names = FALSE)
-dbWriteTable(con, "weather_monthly", weather, row.names = FALSE)
-dbDisconnect(con)
-
 
 # impute with regression (no use, has cost) ####################################
 # find those needing regression
@@ -583,12 +578,6 @@ eo88_imp <- eo88_imp %>%
   mutate(Use = if_else(Imputed == "reg", Use_reg, Use)) %>%
   select(-Use_rf, -Use_reg)
 
-# write to db
-con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
-db <- dbSendQuery(con, "USE EO88;")
-dbFetch(db)
-dbWriteTable(con, "consumption_filingdata_imputed", eo88_imp, row.names = FALSE)
-
 # aggregate totals by calendar month across different billing cycles
 eo88_final <- eo88_imp %>%
   mutate(Use = Use * Share,
@@ -600,13 +589,7 @@ eo88_final <- eo88_imp %>%
             Cost = sum(Cost, na.rm = TRUE)) %>%
   ungroup()
 
-# write to db
-dbWriteTable(con, "consumption_filingdata_final", eo88_final, row.names = FALSE)
-
-# write additional tables for non-reporting purposes
-dbWriteTable(con, "consumption_filingdata_imputed_summed", eo88_final, row.names = FALSE)
-
-# write summed non-imputed version
+# calculate summed non-imputed version
 eo88_summed <- eo88 %>%
   mutate(Use = Use * Share,
          Cost = Cost * Share) %>%
@@ -617,10 +600,5 @@ eo88_summed <- eo88 %>%
             Cost = sum(Cost, na.rm = TRUE)) %>%
   ungroup()
 
-dbWriteTable(con, "consumption_filingdata_asis_summed", eo88_summed, row.names = FALSE)
-
-# close connection
-dbDisconnect(con)
-
 # output results
-save(eo88_imp, eo88_final, eo88_summed, file = "data/output/impute-missing.Rda")
+save(regions, weather, eo88_imp, eo88_final, eo88_summed, file = "data/impute-missing.Rda")

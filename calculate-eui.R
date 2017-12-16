@@ -2,16 +2,16 @@ library(tidyverse)
 
 # extract from db ##############################################################
 library(dbplyr)
+library(odbc)
+library(DBI)
 
 # connect to db
-con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
-db <- dbSendQuery(con, "USE EO88;")
-dbClearResult(db)
+con <- dbConnect(odbc(), Driver = "SQL Server", Server = getOption("ms_sql_server"), Database = "NYEMEO88")
 
 # connect to relevant tables
-meta <- tbl(con, "building_metadata")
-sfy  <- tbl(con, "building_filingdata")
-eofy <- tbl(con, "consumption_filingdata_final")
+meta <- tbl(con, in_schema("EO88", "building_metadata"))
+sfy  <- tbl(con, in_schema("EO88", "building_filingdata"))
+eofy <- tbl(con, in_schema("EO88", "consumption_filingdata_final"))
 
 # join tables
 full_db <- eofy %>% 
@@ -19,9 +19,9 @@ full_db <- eofy %>%
   left_join(sfy) %>% 
   filter(Status == "included")
 
-# get eui by agency, facility, year
-bsny_name <- full_db %>% 
-  group_by(Agency, Name, SFY) %>% 
+# eui for all agencies
+bsny_state <- full_db %>% 
+  group_by(SFY) %>% 
   summarize(EUI = sum(Use) / sum(FloorArea))
 
 # get eui by agency
@@ -29,9 +29,9 @@ bsny_agency <- full_db %>%
   group_by(Agency, SFY) %>% 
   summarize(EUI = sum(Use) / sum(FloorArea))
 
-# eui for all agencies
-bsny_state <- full_db %>% 
-  group_by(SFY) %>% 
+# get eui by agency, facility, year
+bsny_name <- full_db %>% 
+  group_by(Agency, Name, SFY) %>% 
   summarize(EUI = sum(Use) / sum(FloorArea))
 
 # viz from db

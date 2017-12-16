@@ -60,22 +60,6 @@ bldg_sfy <- mutate_at(bldg_sfy,
 
 
 
-# set up db & write building data ##############################################
-library(RMySQL)
-library(odbc)
-# connect to local MySQL environment
-con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
-# create EO88 db
-dbSendQuery(con, "DROP DATABASE IF EXISTS EO88;")
-dbSendQuery(con, "CREATE DATABASE EO88;")
-dbSendQuery(con, "USE EO88;")
-# write two building tables
-dbWriteTable(con, "building_metadata", bldg_meta, row.names = FALSE)
-dbWriteTable(con, "building_filingdata", bldg_sfy, row.names = FALSE)
-# disconnect from server for sanitation while working on eo88 data
-dbDisconnect(con)
-
-
 # tidy eo88 data ###############################################################
 
 # clean up eo88 names
@@ -188,12 +172,6 @@ eo88 <- eo88 %>%
 
 
 # impute values requiring filling ##############################################
-# write non-imputed values to db
-con <- dbConnect(MySQL(), default.file = paste0(getwd(), "/", ".my.cnf"))
-db <- dbSendQuery(con, "USE EO88;")
-dbFetch(db)
-dbWriteTable(con, "consumption_filingdata_asis", eo88, row.names = FALSE)
-dbDisconnect(con)
 
 # see model-train.R for attempted (unsuccesful) model training
 # see impute-missing.R for successful imputation
