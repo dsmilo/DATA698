@@ -101,7 +101,7 @@ library(pander)
 eo88 %>%
   group_by(Fuel, Units) %>%
   summarize(Count = n()) %>%
-  arrange(desc(Count)) %>% 
+  arrange(desc(Count)) %>%
   pander()
 
 # read in converstion table to source kBtu (adapted from epa portfolio mgr)
@@ -139,7 +139,7 @@ eo88 <- eo88 %>%
 # investigate billing month distribution
 library(lubridate)
 theme_set(theme_light())
-eo88 %>% select(Start, End) %>% 
+eo88 %>% select(Start, End) %>%
   mutate_all(day) %>%
   ggplot(aes(x = Start, y = End)) +
   stat_bin_2d() +
@@ -199,4 +199,4 @@ dbDisconnect(con)
 # see impute-missing.R for successful imputation
 
 # save processed data for replicability
-save(bldg_meta, bldg_sfy, eo88, file = "data/eo88.Rda")
+save(bldg_meta, bldg_sfy, eo88, file = "data/output/data-prep.Rda")
