@@ -1,0 +1,208 @@
+---
+title: 'DATA 698 Final Report: Executive Order 88 Energy Analytics & Data Cleansing'
+author: "Dan Smilowitz"
+date: "December 18, 2017"
+output: 
+  pdf_document: 
+    fig_caption: yes
+    fig_height: 5
+    fig_width: 7
+    highlight: pygments
+fontsize: 12pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, comment = NA)
+```
+
+# Problem Description
+
+## Background
+On December 28, 2012, New York Governor Andrew Cuomo issued [Executive Order 88](http://www.governor.ny.gov/news/no-88-directing-state-agencies-and-authorities-improve-energy-efficiency-state-buildings) requiring that
+
+  > By April 1, 2020, all Affected State Entities shall collectively reduce the average EUI [Energy Use Intensity] in State-owned and managed buildings by at least 20% from a baseline of the average EUI of such buildings for State fiscal year 2010/2011
+
+The [New York Power Authority](https://www.nypa.gov) was charged with establishing a central management and implementation team to administer the executive order, directed and authorized to (among other responsibilities):
+
+  - Take all appropriate measures to ensure that the order's target is met
+  - Direct Affected State Entities to comply with the requirements of this order
+  - Provide strategic, technical, and other assistance to each entity to support implementation
+  - Develop annual milestones for achieving the target
+  - Develop and implement reporting requirements to document each entity's progress toward the target
+  - Develop a comprehensive operations and maintenance plan for the State's building portfolio to help achieve no cost and low cost efficiency improvements and ensure that efficiency savings are sustained
+
+The Executive Order (EO88) led to the creation of NYPA's [BuildSmart NY](https://www.nypa.gov/innovation/programs/buildsmart-ny) program.  BuildSmart NY is a key part of Governor Cuomo's [Reforming the Energy vision](https://rev.ny.gov/) energy strategy and is the premier energy efficiency program referenced in the [2015 New York State Energy Plan](https://energyplan.ny.gov/Plans/2015.aspx).
+
+
+## Challenges
+Agencies are responsible for performing their own data validation --- the performance of this task has proved incomplete.  Many facilities have missing data for the baseline year, as well as showing large spikes or dips in reported usage believed to be due to data entry errors.  NYPA must ensure accurate data is used for the establishment of baselines and the tracking and reporting of performance.
+
+EO88 reporting data has been hosted by a software vendor responsible for the the creation and maintenance of NYPA's [New York Energy Manager](https://www.nypa.gov/services/digital-energy-services/ny-energy-manager) (NYEM) platform.  The current structure of the data provides a great deal of redundancy and unused columns, harming the efficiency of computations based on this data.  Finally, the vendor's platform has been unable to properly handle the quality issues of reported data.
+
+Finally, the NYEM platform and the [annual EO88 report](https://www.nypa.gov/-/media/nypa/documents/document-library/operations/eo88-annualreport-2016.pdf) produced by the BuildSmart NY team identify performance at agency and facility levels, but do not sufficiently highlight trends in the data, nor serve to identify performance by facility characteristics to allow for the development of new energy service offerings to help customer meet their required energy reductions.
+
+
+
+# Data Preparation
+An extract of the database was provided in two files -- one containing building data, and one containing reported consumption data.  The two extract files are imported and their structures investigated:
+```{r load-extracts}
+library(tidyverse)
+
+bldg <- read_csv("data/2017-10-25_nyem-eo88_bldg-all-sfy.csv")
+eo88 <- read_csv("data/2017-10-26_nyem-eo88_consumption-all-sfy.csv")
+```
+
+
+## Building Data
+The structure of the building dataset is investigated:
+```{r bldg-structure, echo=FALSE}
+# function to print summary of variable types & missing values
+library(pander)
+var_summary <- function(df) {
+  cat(paste(deparse(substitute(df)), ":\n",
+            nrow(df), "observatons of", ncol(df), "variables\n",
+            sum(is.na(df)), "/", nrow(df) * ncol(df), "values missing\n"))
+  pander(data.frame(class = sapply(df, typeof),
+                    Missing = sapply(df, function(x) sum(is.na(x))),
+                    row.names = names(df)),
+         split.table = Inf, split.cells = 65)
+}
+var_summary(bldg)
+```
+
+The `bldg` data frame contains 126 columns, many of which correspond to reporting fields for each fiscal year.  There also a fair number of fields corresponding to building information independent of fiscal year.  To make more efficient use of storage, the data is converted using Hadley Wickham's [tidy data](http://vita.had.co.nz/papers/tidy-data.pdf) principles:
+```{r tidy-bldg}
+# tidy data that changes by SFY
+bldg <- bldg %>%
+  gather(Field, Value,
+         `SFY2010-11 Gross Floor Area (ft2)`:
+           `SFY2016-17 Property Type 5 Percent of Total Gross Floor Area`)
+
+# separate FY from actual measure
+bldg <- bldg %>%
+  mutate(SFY = str_sub(Field, end = 10),
+         Field = str_sub(Field, start = 12))
+
+# remove duplicate entries per FY & ESP ID (unique identifier)
+bldg <- bldg %>% distinct(`ESP Location ID`, SFY, Field, .keep_all = TRUE)
+
+# spread FY-based fields
+bldg <- bldg %>%
+  spread(Field, Value)
+
+# clean up bldg names
+names(bldg) <- str_replace_all(names(bldg), " ", "")
+```
+
+Building metadata that remains constant and building data that may change by fiscal year are separated into two tables to join like operations and further optimize use of storage.  The primary key for each building is `ESPLocationID`; as such, this field is contained in both tables:
+```{r split-bldg}
+# create two dfs -- one with fixed data & hierarchy; other with SFY data
+bldg_meta <- bldg %>% select(ESPLocationID:NYSNOAAClimateRegion)
+bldg_sfy  <- bldg %>% select(ESPLocationID, SFY:`WeeklyOperatingHours(Hours/Week)`)
+```
+
+### Fixed Building Metadata
+The building metadata requires only minor cleanup -- removing duplicate entries (arising from the repeating of these fields across fiscal years) and the renaming of fields
+```{r clean-bldg-meta}
+# remove duplicates
+bldg_meta <- distinct(bldg_meta)
+
+# rename & reorder fields
+bldg_meta <- bldg_meta %>% 
+  rename(Name = BuildingName,
+         Agency = AgencyName,
+         ClimateRegion = NYSNOAAClimateRegion,
+         Address = BuildingAddress,
+         City = BuildingCity,
+         ZipCode = BuildingZipCode,
+         Included = Status)
+
+# convert included field to boolean
+bldg_meta$Included <- bldg_meta$Included == "included"
+```
+
+This table is now far more compact:
+```{r summ-bldg-meta, echo=FALSE}
+var_summary(bldg_meta)
+```
+
+
+### Variable Building Data
+Building data varying across fiscal years requires additional cleanup, as the names of fields are lengthy and not all variables are stored as the correct data type due to earlier transformations.
+
+```{r clean-bldg-sfy}
+# remove redundant "SFY" from SFY field
+bldg_sfy$SFY <- str_sub(bldg_sfy$SFY, 4)
+
+# shorten long names & remove any parentheses
+bldg_sfy <- bldg_sfy %>%
+  rename(FloorArea = `GrossFloorArea(ft2)`,
+         PeakOccupants = PeakTotalOccupants,
+         CooledPct = PercentofGrossFloorAreaCooled,
+         HeatedPct = PercentofGrossFloorAreaHeated,
+         Type_BEDES = `PropertyType(BEDES)`,
+         Type_ES = `PropertyType(ES)`,
+         WeeklyHours = `WeeklyOperatingHours(Hours/Week)`)
+
+# shorten property & percentage
+names(bldg_sfy) <- str_replace_all(names(bldg_sfy), "Property", "")
+names(bldg_sfy) <- str_replace_all(names(bldg_sfy), "PercentofTotalGrossFloorArea", "Pct")
+
+# drop empty "Type" field
+bldg_sfy <- bldg_sfy %>% select(-Type)
+
+# convert fy-reported fields from character to numeric
+bldg_sfy <- mutate_at(bldg_sfy,
+  vars(FloorArea, PeakOccupants, CooledPct, HeatedPct, Type1Pct, Type2Pct,
+       Type3Pct, Type4Pct, Type5Pct, WeeklyHours),
+  parse_number)
+```
+
+
+This table is far more reasonable for processing, and is properly tided and normalized:
+```{r summ-bldg-sfy, echo=FALSE}
+var_summary(bldg_sfy)
+```
+
+
+## Consumption Data
+
+### Mapping to Calendar Month
+
+
+# Data Mining & Imputation
+
+Data Exploration
+
+## Missing Value Patterns
+
+### Reported Demand & Cost
+
+### No Demand or Cost
+
+### Reported Cost; No Demand
+
+## Data Imputation
+
+### Random Forest
+
+### Regression
+
+### Results
+
+
+## Export to Database
+
+
+# Performance Analysis
+
+## In-Database Calculation
+
+## In-Memory Calculation
+
+### Visualization
+
+## Analysis by Segments
+
+
