@@ -1,7 +1,6 @@
 ---
-title: 'DATA 698 Final Report: Executive Order 88 Energy Analytics & Data Cleansing'
+title: 'DATA 698 Report: Energy Analytics'
 author: "Dan Smilowitz"
-date: "December 18, 2017"
 output: 
   pdf_document: 
     fig_caption: yes
@@ -13,15 +12,18 @@ geometry: margin=1in
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, comment = NA)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, comment = NA)
 ```
 
-# Problem Description
+## Abstract
+Some background, challenges, approach, findings -- WRITE LAST
 
-## Background
+## Problem Description
+
+### Background
 On December 28, 2012, New York Governor Andrew Cuomo issued [Executive Order 88](http://www.governor.ny.gov/news/no-88-directing-state-agencies-and-authorities-improve-energy-efficiency-state-buildings) requiring that
 
-  > By April 1, 2020, all Affected State Entities shall collectively reduce the average EUI [Energy Use Intensity] in State-owned and managed buildings by at least 20% from a baseline of the average EUI of such buildings for State fiscal year 2010/2011
+  > By April 1, 2020, all Affected State Entities shall collectively reduce the average EUI [Energy Use Intensity] in State-owned and managed buildings by at least 20% from a baseline of the average EUI ... for State fiscal year 2010/2011
 
 The [New York Power Authority](https://www.nypa.gov) was charged with establishing a central management and implementation team to administer the executive order, directed and authorized to (among other responsibilities):
 
@@ -35,7 +37,7 @@ The [New York Power Authority](https://www.nypa.gov) was charged with establishi
 The Executive Order (EO88) led to the creation of NYPA's [BuildSmart NY](https://www.nypa.gov/innovation/programs/buildsmart-ny) program.  BuildSmart NY is a key part of Governor Cuomo's [Reforming the Energy vision](https://rev.ny.gov/) energy strategy and is the premier energy efficiency program referenced in the [2015 New York State Energy Plan](https://energyplan.ny.gov/Plans/2015.aspx).
 
 
-## Challenges
+### Challenges
 Agencies are responsible for performing their own data validation --- the performance of this task has proved incomplete.  Many facilities have missing data for the baseline year, as well as showing large spikes or dips in reported usage believed to be due to data entry errors.  NYPA must ensure accurate data is used for the establishment of baselines and the tracking and reporting of performance.
 
 EO88 reporting data has been hosted by a software vendor responsible for the the creation and maintenance of NYPA's [New York Energy Manager](https://www.nypa.gov/services/digital-energy-services/ny-energy-manager) (NYEM) platform.  The current structure of the data provides a great deal of redundancy and unused columns, harming the efficiency of computations based on this data.  Finally, the vendor's platform has been unable to properly handle the quality issues of reported data.
@@ -44,8 +46,8 @@ Finally, the NYEM platform and the [annual EO88 report](https://www.nypa.gov/-/m
 
 
 
-# Data Preparation
-An extract of the database was provided in two files -- one containing building data, and one containing reported consumption data.  The two extract files are imported and their structures investigated:
+## Data Preparation
+An extract of the database was provided in two files -- one containing building data, and one containing reported consumption data.  The two extract files are imported and their structures investigated.
 ```{r load-extracts}
 library(tidyverse)
 
@@ -54,25 +56,18 @@ eo88 <- read_csv("data/2017-10-26_nyem-eo88_consumption-all-sfy.csv")
 ```
 
 
-## Building Data
-The structure of the building dataset is investigated:
-```{r bldg-structure, echo=FALSE}
-# function to print summary of variable types & missing values
-library(pander)
-var_summary <- function(df) {
-  cat(paste(deparse(substitute(df)), ":\n",
-            nrow(df), "observatons of", ncol(df), "variables\n",
-            sum(is.na(df)), "/", nrow(df) * ncol(df), "values missing\n"))
-  pander(data.frame(class = sapply(df, typeof),
-                    Missing = sapply(df, function(x) sum(is.na(x))),
-                    row.names = names(df)),
-         split.table = Inf, split.cells = 65)
-}
-var_summary(bldg)
-```
+### Building Data
+The building data set contains 126 columns, many of which correspond to reporting fields for each fiscal year.  There also a fair number of fields corresponding to building information independent of fiscal year.  To make more efficient use of storage, the data is converted using Hadley Wickham's [tidy data](http://vita.had.co.nz/papers/tidy-data.pdf) principles:
 
-The `bldg` data frame contains 126 columns, many of which correspond to reporting fields for each fiscal year.  There also a fair number of fields corresponding to building information independent of fiscal year.  To make more efficient use of storage, the data is converted using Hadley Wickham's [tidy data](http://vita.had.co.nz/papers/tidy-data.pdf) principles:
+  - Data corresponding to each State Fiscal Year (SFY) are "gathered" to be represented as a field-value pair
+  - SFY is extracted from each field name & stored as the SFY for each measure
+  - Any duplicated entries are removed
+  - SFY-dependent fields are "spread" so that each field is a column and has a value for each SFY
+  - Spaces are removed from all field names to make references simpler
+
 ```{r tidy-bldg}
+# library(stringr) # not necessary for tidyverse version >= 1.2
+
 # tidy data that changes by SFY
 bldg <- bldg %>%
   gather(Field, Value,
@@ -95,48 +90,48 @@ bldg <- bldg %>%
 names(bldg) <- str_replace_all(names(bldg), " ", "")
 ```
 
-Building metadata that remains constant and building data that may change by fiscal year are separated into two tables to join like operations and further optimize use of storage.  The primary key for each building is `ESPLocationID`; as such, this field is contained in both tables:
+Building metadata that remains constant and building data that may change by fiscal year are separated into two tables to join like operations and further optimize use of storage.  The primary key for each building is `ESPLocationID`; as such, this field is contained in both tables.
 ```{r split-bldg}
 # create two dfs -- one with fixed data & hierarchy; other with SFY data
-bldg_meta <- bldg %>% select(ESPLocationID:NYSNOAAClimateRegion)
-bldg_sfy  <- bldg %>% select(ESPLocationID, SFY:`WeeklyOperatingHours(Hours/Week)`)
+bldg_meta <- bldg %>% select(ESPLocationID, NYEMSystemID, AgencyName:NYSNOAAClimateRegion)
+bldg_sfy  <- bldg %>% select(ESPLocationID, Status, SFY:`WeeklyOperatingHours(Hours/Week)`)
 ```
 
-### Fixed Building Metadata
-The building metadata requires only minor cleanup -- removing duplicate entries (arising from the repeating of these fields across fiscal years) and the renaming of fields
+#### Fixed Building Metadata
+The building metadata requires only minor cleanup -- removing duplicate entries (arising from the repeating of these fields across fiscal years) and the renaming of fields for enhanced clarity in naming convention.
 ```{r clean-bldg-meta}
-# remove duplicates
+# remove duplicates from SFY duplication
 bldg_meta <- distinct(bldg_meta)
 
-# rename & reorder fields
-bldg_meta <- bldg_meta %>% 
+# rename fields
+bldg_meta <- bldg_meta %>%
   rename(Name = BuildingName,
          Agency = AgencyName,
          ClimateRegion = NYSNOAAClimateRegion,
          Address = BuildingAddress,
          City = BuildingCity,
-         ZipCode = BuildingZipCode,
-         Included = Status)
-
-# convert included field to boolean
-bldg_meta$Included <- bldg_meta$Included == "included"
+         ZipCode = BuildingZipCode)
 ```
 
-This table is now far more compact:
-```{r summ-bldg-meta, echo=FALSE}
-var_summary(bldg_meta)
-```
+This fixed building metadata table is now far more compact, containing only 12 variables.
 
 
-### Variable Building Data
-Building data varying across fiscal years requires additional cleanup, as the names of fields are lengthy and not all variables are stored as the correct data type due to earlier transformations.
+#### Variable Building Data
+Building data varying across fiscal years requires additional cleanup, as the names of fields are lengthy and not all variables are stored as the correct data type due to earlier transformations.  The following transformations are performed:
+
+  - The redundant characters "SFY" are removed from the `SFY` field
+  - Field names are adjusted:
+    - Parentheses are removed from all field names
+    - Long names are shortened to be more managable
+  - The unused `Type` field is removed
+  - SFY-reported fields are converted from character to numeric
 
 ```{r clean-bldg-sfy}
-# remove redundant "SFY" from SFY field
+# remove "SFY" from SFY field
 bldg_sfy$SFY <- str_sub(bldg_sfy$SFY, 4)
 
-# shorten long names & remove any parentheses
-bldg_sfy <- bldg_sfy %>%
+# shorten long names, remove any parentheses
+bldg_sfy <- bldg_sfy %>% 
   rename(FloorArea = `GrossFloorArea(ft2)`,
          PeakOccupants = PeakTotalOccupants,
          CooledPct = PercentofGrossFloorAreaCooled,
@@ -145,7 +140,7 @@ bldg_sfy <- bldg_sfy %>%
          Type_ES = `PropertyType(ES)`,
          WeeklyHours = `WeeklyOperatingHours(Hours/Week)`)
 
-# shorten property & percentage
+# shorten property & pct
 names(bldg_sfy) <- str_replace_all(names(bldg_sfy), "Property", "")
 names(bldg_sfy) <- str_replace_all(names(bldg_sfy), "PercentofTotalGrossFloorArea", "Pct")
 
@@ -160,49 +155,225 @@ bldg_sfy <- mutate_at(bldg_sfy,
 ```
 
 
-This table is far more reasonable for processing, and is properly tided and normalized:
-```{r summ-bldg-sfy, echo=FALSE}
-var_summary(bldg_sfy)
+This table is now far more reasonable for processing, and is properly tided and normalized, containing no fixed metadata fields.
+
+
+### Consumption Data
+The reported consumption dataset contains roughly 177,000 rows and 16 columns.  As with the two building datasets above, field names are modified to remove any spaces or parentheses and shortened to be more concise.  Fuel and units of measure of reported usage are reported as a single field; these are separated into separate fields to enable later analysis.
+```{r eo88-names}
+# clean up eo88 names
+names(eo88) <- str_replace_all(names(eo88), " ", "")
+
+# rename fields
+eo88 <- eo88 %>%
+  rename(Parent = ParentESPLocationID,
+         FuelUnits = `FuelType(units)`,
+         Start = BillingPeriodStart,
+         End = BillingPeriodEnd,
+         Utility = UtilityProvider,
+         Demand = `Demand(kW)`)
+
+# split fuel type & units
+eo88 <- eo88 %>%
+  mutate(Fuel = str_split(FuelUnits, " \\(", simplify = TRUE)[, 1],
+         Units = str_split(FuelUnits, " \\(", simplify = TRUE)[, 2],
+         Units = str_replace_all(Units, "\\)", ""))
 ```
 
 
-## Consumption Data
+#### Conversion to Source kBtu
+Energy use intensity is calculated using a simple formula:
+$$EUI = \frac{Energy\ Use}{Area}$$
+
+Reported usage values span seven different units.  In order to create a unified view of EUI across all fuels, all reported usage must be converted to a single unit of measure.  The standard units for measuring EUI are thousands of British thermal units (kBtu) -- Energy Star Portfolio Manager provides extensive [Thermal Energy Converstions](https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf) technical reference to handle these conversions.
+
+Progress towards EO88 goals is measured using *source EUI*, which takes into account the total energy needed to make the energy used available (i.e. the amount of raw fuel needed to meet the consumption need).  Therefore, the kBtu must be converted from site energy use to source energy use.  Energy Star Portfolio Manager also provides a [Source Energy](https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf) technical reference, which shows that these conversion factors vary by fuel type.  These conversion factors vary over time based on changes in power generation.  To avoid changes in conversion of reported values between fiscal years, the BuildSmart NY team uses a fixed conversion table for all years; this table is used for conversion.
+```{r souce-kbtu}
+# read in converstion table to source kBtu (adapted from epa portfolio mgr)
+eui_conv <- read_csv("data/2017-11-13_epa-portfolio-mgr_conversion-factors.csv")
+## https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
+## https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf
+
+# convert to source kBtu
+eo88 <- eo88 %>%
+  # get multipliers
+  left_join(eui_conv, by = "FuelUnits") %>%
+  # convert to source energy
+  mutate(Use = Use * kBtu_mult * source_mult) %>%
+  # drop multipliers
+  select(-kBtu_mult, -source_mult)
+```
+
+
+#### Removal of Redundant Data
+The first seven of the 16 variables in the consumption data are also included in the building data.  Following conversion to source kBtu, these variables are removed (with the exception of `ESPLocationID`) to enforce normalization.  Additionally, the empty `Rate/ServiceClassification` is removed, as is the redundant variable containing the fuel & units (in favor of the separated `Fuel` and `Units` variables).
+```{r eo88-select-vars}
+# remove duplicated bldg data (& empty rate/sc) -- retrieve using esp id
+eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
+                        Start, End, Fuel, Units, Use, Demand, Cost)
+```
+
+
+#### Changes in Campus Reporting
+One of the fields in the consumption data is `Parent` -- this indicates relationships between facilities where one facility may be a sub-facility of another (such as a college campus or office plaza).  Investigation of the consumption data reveals that not all `ESPLocationID` values supplied in the consumption data have associated values in the building data (fixed or variable).  Discussion with the BuildSmart NY team revealed that this occurs in two cases:
+
+  - One facility with a number of sub-facilities was exempt from EO88 reporting & compliance
+  - Many large college campuses moved from site-level reporting to campus-level reporting
+  
+Those sites that changed to campus-level reporting and are not included in the building metadata are changed to the `ESPLocationID` of the parent facility so that their information can be accurately included in calculation of performance in earlier fiscal years.  The `Parent` field is then removed, as it is no longer relevant.
+```{r parent-facilities}
+# remove data for irrelevant facilities with parent esp 5106
+eo88 <- eo88 %>%
+  filter(Parent != 5106)
+
+# some sites went from building to campus reporting & are not in bldg_meta
+# replace these (only sites not in bldg_meta) with parent ESP
+eo88 <- eo88 %>%
+  mutate(ESPLocationID = ifelse(ESPLocationID %in% bldg_meta$ESPLocationID,
+                                ESPLocationID, Parent)) %>%
+  select(-Parent)
+```
+
 
 ### Mapping to Calendar Month
+As outlined above, reporting for EO88 is based on New York State Fiscal Years, which span from April 1 to March 31 of the following year.  In order to accurately report on each State Fiscal Year's source EUI, reported usage must align with each State Fiscal Year, particularly the calendar months at the start and end of each SFY.  Investigation of billing period start & end dates shows that while an bills most commonly start at the beginning of the month and end at the end of the month, many bills start and/or end at other points in the month, with a strong trend towards roughly matching start and end days:
+```{r day-plot}
+# investigate billing month distribution
+library(lubridate)
+theme_set(theme_light())
+eo88 %>% select(Start, End) %>%
+  mutate_all(day) %>%
+  ggplot(aes(x = Start, y = End)) +
+  stat_bin_2d() +
+  scale_fill_distiller(trans = "log10", breaks = c(1, 10, 100, 1000, 10000),
+                      labels = c(1, 10, 100, "1k", "10k"),
+                      direction = 1, na.value = "black") +
+  labs(title = "Reported billing cycle start & end day of month",
+       subtitle = "Count of occurences with given start & end day",
+       x = "Bill start", y = "Bill end", fill = NULL) +
+  theme_minimal() +
+  theme(legend.direction = "horizontal", legend.position = c(0.9, 1.15),
+        legend.justification = c(1, 1), legend.background = element_blank())
+```
 
+These values must be converted to contain the reported usage in a given month so that they can be mapped to State Fiscal years.  In order to accomplish this, a function is created that extracts, for each reported value:
 
-# Data Mining & Imputation
+  - Each calendar month the value encompasses
+  - The number of days the billed value overlaps each month encompassed
+  - The prorated share of usage per month, assuming flat usage through the period
+
+This function is applied to each reported consumption value.  During application, the State Fiscal Year for each month is also added, and the bill start & end dates removed.  Finally, months falling outside the required reporting period (SFY 2010-11 through SFY 2016-17) are excluded.
+```{r bill-to-cal, eval=FALSE}
+# function to prorate billed dates to calendar dates & number of days in month
+bill_to_cal <- function(start_dt, end_dt) {
+  # create sequence of months
+  tibble(Month = seq.Date(floor_date(start_dt, "m"), floor_date(end_dt, "m"), "m")) %>%
+    # get # days in month
+    ## same month: number of days in period (adding 1 to include first day)
+    ## start month: days in start month - day of month (adding 1 to include first day)
+    ## end month: day of end date
+    ## between months: days in month (for periods that span > 2 months)
+    mutate(
+      Days = case_when(
+        month(start_dt) == month(end_dt) ~ day(end_dt) - day(start_dt) + as.integer(1),
+        Month == floor_date(start_dt, "m") ~ days_in_month(start_dt) - day(start_dt) + as.integer(1),
+        Month == floor_date(end_dt, "m") ~ day(end_dt),
+        TRUE ~ days_in_month(Month)),
+      # get share of days in each month to scale reported values
+      Share = Days / sum(Days))
+}
+
+# convert billed values to calendar month values -- not run in report due to long runtime
+eo88 <- eo88 %>%
+  mutate(cal_month = map2(Start, End, bill_to_cal)) %>%
+  unnest() %>%
+  select(-Start, -End, -Days) %>%
+  # add SFY
+  mutate(SFY = ifelse(month(Month) >= 4,
+                      paste(year(Month), str_sub(year(Month) + 1, -2, -1), sep = "-"),
+                      paste(year(Month) - 1, str_sub(year(Month), -2, -1), sep = "-")))
+
+# remove months before SFY 10-11 & after FY 16-17
+eo88 <- eo88 %>%
+  filter(Month >= ymd("20100401"), Month <= ymd("20170331"))
+```
+
+```{r load-month-eo88}
+# load eo88 data with calendar date conversion complete
+load("data/data-prep.Rda")
+```
+
+Following this conversion to calendar dates, the building and consumption data are sufficiently prepared for analysis, beginning with an exploration of missing data.
+
+## Data Mining & Imputation
 
 Data Exploration
 
-## Missing Value Patterns
+### Missing Value Patterns
 
-### Reported Demand & Cost
+#### Reported Demand & Cost
 
-### No Demand or Cost
+#### No Demand or Cost
 
-### Reported Cost; No Demand
+#### Reported Cost; No Demand
 
-## Data Imputation
+### Data Imputation
 
-### Random Forest
+#### Random Forest
 
-### Regression
+#### Regression
 
-### Results
+#### Results
 
 
 ## Export to Database
 
 
-# Performance Analysis
+## Performance Analysis
 
-## In-Database Calculation
+### In-Database Calculation
 
-## In-Memory Calculation
+### In-Memory Calculation
 
-### Visualization
+#### Visualization
 
-## Analysis by Segments
+### Analysis by Segments
 
+
+## Acknowledgements
+Thank you to Honey Berk for her guidance in overcoming the myriad challenges encountered throughout the course of this project.  Thank you also to Gabe Cowles, Ryan Droege, Srini Pusuluri, Joe O'Connor, Julie Reardon, Prasad Surapaneni, and Godly Varghese for their assistance in the acquisition and understanding of the data used for this project.  
+
+
+## References
+Hadley Wickham (2017). tidyverse: Easily Install and Load the 'Tidyverse'. R package version 1.2.1. https://CRAN.R-project.org/package=tidyverse
+
+Hadley Wickham and Edgar Ruiz (2017). dbplyr: A 'dplyr' Back End for Databases. R package version 1.1.0.9000. https://github.com/tidyverse/dbplyr
+
+Jim Hester and Hadley Wickham (2017). odbc: Connect to ODBC Compatible Databases (using the DBI Interface). R package version 1.1.1.9000. https://github.com/rstats-db/odbc
+
+R Special Interest Group on Databases (R-SIG-DB), Hadley Wickham and Kirill Müller (2017). DBI: R Database Interface. R package version 0.7. https://CRAN.R-project.org/package=DBI
+
+Stef van Buuren, Karin Groothuis-Oudshoorn (2011). mice: Multivariate Imputation by Chained Equations in R. Journal of Statistical Software, 45(3), 1-67. http://www.jstatsoft.org/v45/i03/.
+
+Alexander Kowarik, Matthias Templ (2016). Imputation with the R Package VIM. Journal of Statistical Software, 74(7), 1-16. doi:10.18637/jss.v074.i07
+
+Gergely Daróczi and Roman Tsegelskyi (2017). pander: An R 'Pandoc' Writer. R package version 0.6.1. https://CRAN.R-project.org/package=pander
+
+Garrett Grolemund, Hadley Wickham (2011). Dates and Times Made Easy with lubridate. Journal of Statistical Software, 40(3), 1-25. URL http://www.jstatsoft.org/v40/i03/.
+
+Governor Andrew M. Cuomo (2012). Executive Order No. 88: Directing State Agencies and Authorities to Improve the Energy Efficiency of State Buildings. http://www.governor.ny.gov/news/no-88-directing-state-agencies-and-authorities-improve-energy-efficiency-state-buildings.
+
+Energy Star Portfolio Manager (2015). Technical Reference: Thermal Energy Conversions. https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
+
+Energy Star Portfolio Manager (2013). Technical Reference: Source Energy. https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf
+
+National Oceanic and Atmospheric Administration (2017). Divisional Data Select. https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
+
+New York Power Authority (2017). BuildSmart NY. https://www.nypa.gov/innovation/programs/buildsmart-ny
+
+New York Power Authority (2017). NY Energy Manager. https://www.nypa.gov/services/digital-energy-services/ny-energy-manager
+
+BuildSmart NY (2016).  EO88 2016 Annual Report. https://www.nypa.gov/-/media/nypa/documents/document-library/operations/eo88-annualreport-2016.pdf
+
+Edgar Ruiz (2017). dbplot: Simplifies Plotting Data Inside Databases. R package version 0.1.1. https://CRAN.R-project.org/package=dbplot
 
