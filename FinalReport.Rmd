@@ -3,7 +3,6 @@ title: "Executive Order 88 Energy Analytics & Data Cleansing"
 author: "Dan Smilowitz"
 output: 
   pdf_document: 
-    fig_caption: yes
     fig_height: 5
     fig_width: 7
     highlight: pygments
@@ -120,7 +119,7 @@ Building data varying across fiscal years required additional cleanup, as the na
   - The redundant characters "SFY" were removed from the `SFY` field
   - Field names were adjusted:
     - Parentheses were removed from all field names
-    - Long names were shortened to be more managable
+    - Long names were shortened to be more manageable
   - The unused `Type` field was removed
   - SFY-reported fields were converted from character to numeric
 
@@ -424,13 +423,80 @@ This plot shows clear seasonality, with far more values flagged for correction i
 These patterns, as well as the poor accuracy of attempted data correction, were brought to the BuildSmart NY and NYEM teams to help identify a solution to improve accuracy and reduce any bias.  The NYEM team, after conversation with the vendor that provided the data extract, revealed that **all provided values has already been verified by the reporting agencies.**  This information changed the direction of the approach: data no longer needed to be flagged for imputation; only missing values needed to be filled.
 
 
-### Missing Value Patterns
+## Data Cleansing: Revised Approach
+The redefined scope of this project called for a focus on only missing values.  Prior to investigating these missing values, the overall distribution of reported usage values was investigated:
+```{r overall-boxplot}
+# set up df to flag imputed & method
+eo88_imp <- eo88 %>% mutate(Imputed = character(nrow(eo88)))
 
-#### Reported Demand & Cost
+# investigate distribution of Use values by SFY
+ggplot(eo88_imp, aes(x = SFY, y = Use)) + geom_boxplot() +
+  ggtitle("Distribution of reported usage values by SFY")
+```
 
-#### No Demand or Cost
+There are two values in SFY 2010-11, one positive and one negative, that are well beyond the scale of all other reported values.  These two extreme values (the overall maximum and minimum) are investigated; usage for the facilities and fuels corresponding to the extreme values are plotted by account number:
+```{r extremes-plot}
+# investigate two extreme values (1.6e+9 & 1.6e-9)
+extremes <- eo88_imp %>%
+  filter(Use == max(Use, na.rm = TRUE) | Use == min(Use, na.rm = TRUE)) %>%
+  select(ESPLocationID, Fuel, AccountNumber, Month, Use, Demand, Cost)
 
-#### Reported Cost; No Demand
+eo88_imp %>%
+  filter(ESPLocationID %in% extremes$ESPLocationID, Fuel %in% extremes$Fuel) %>%
+  ggplot(aes(x = Month, y = Use)) +
+  geom_line() +
+  facet_wrap(ESPLocationID ~ AccountNumber, scales = "free_y") +
+  labs(title = "Usage for facilities with maximum & minimum reported monthly usage",
+       subtitle = "Usage shown by ESPLocationID & account number",
+       caption = "All accounts for fuel containing max & min values shown")
+```
+
+The maximum ($\sim 1.6 \times 10^9$) and minimum ($\sim -1.6 \times 10^9$) reported monthly kBtu occur for the same facility (`ESPLocationID` 324), fuel (Electricity, grid purchase), and account number (*Electric-291010012800006*) in consecutive months (January-February 2011).  While these numbers have been verified by the reporting agency (per the NYEM team), it is likely that these two errors represent a billing or metering error followed by a corresponding correction.  To avoid any errors in reporting that may be caused by these extreme values, both were replaced by the mean use of the two months; the same is performed for cost and demand.  A modified version of the consumption data set was created with an additional variable `Imputed` added to track all imputations performed; this change is recorded as *manual*.
+```{r extremes-impute}
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = replace(Imputed, which(Use %in% extremes$Use), "manual"),
+         Use = replace(Use, which(Use %in% extremes$Use), mean(extremes$Use)),
+         Demand = replace(Demand, which(Demand %in% extremes$Demand), mean(extremes$Demand)),
+         Cost = replace(Cost, which(Cost %in% extremes$Cost), mean(extremes$Cost)))
+```
+
+To understand missing values and how they may be imputed, the frequency and patterns of missingness were investigated using the `mice` package (note that the `Imputed` variable was created as an empty character string to avoid obfuscating missingness patterns):
+```{r aggr-allvars}
+library(mice)
+library(pander)
+md.pattern(eo88_imp) %>% t() %>% pander()
+```
+
+It is clear that only three reported variables contain missing values -- `Use`, `Demand`, and `Cost`.  The patterns in missing data between these variables were visualized using the `VIM` package:
+```{r aggr}
+eo88_imp %>%
+  select(Use, Demand, Cost) %>% 
+  VIM::aggr(numbers = TRUE, prop = FALSE, bars = FALSE, cex.numbers = 0.9)
+```
+
+The left segment of this plot shows that there are roughly 10,000 cases missing `Use`, roughly 8,000 missing `Cost`, and over 200,000 missing `Demand` -- this last number is sensible since the original name of the field specifically referenced kW and therefore would only apply to electricity.  The right segment shows that there are six patterns in which data is missing some or all of these variables, with the most common being missing only demand.
+
+For the purposes of Executive Order 88 analysis and reporting, demand and cost are of no immediate import; only use is of concern, as it is used to calculate source EUI.  There are only three patterns of missingness which involve missing use:
+
+  - Missing use; reported demand; reported cost (7 instances)
+  - Missing use; missing demand; missing cost (740 instances)
+  - Missing use; missing demand; reported cost (9207 instances)
+
+Each of these patterns is investigated individually, as the approach to imputing the missing values will likely vary.
+
+### Reported Demand & Cost
+The instances of missing reported use with reported demand and cost all occur for the same account (*Electric-495520212030000*) in consecutive months (April-October 2012); the demand and cost values for each of these months is zero.  Investigation with NYPA staff reveals that this account did not exist prior to November 2012 -- it is likely that the reported zero demand and cost were back-filled to populate the State Fiscal Year with data.  These use values are imputed with zero and flagged with an `Imputed` tag of *zero*.
+```{r reported-demand-cost}
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = if_else(is.na(Use) & !is.na(Demand) & !is.na(Cost), "zero", Imputed),
+         Use = if_else(is.na(Use) & !is.na(Demand) & !is.na(Cost), 0, Use))
+```
+
+
+### No Demand or Cost
+
+
+### Reported Cost; No Demand
 
 ### Data Imputation
 
@@ -494,4 +560,4 @@ BuildSmart NY (2016).  EO88 2016 Annual Report. https://www.nypa.gov/-/media/nyp
 
 Edgar Ruiz (2017). dbplot: Simplifies Plotting Data Inside Databases. R package version 0.1.1. https://CRAN.R-project.org/package=dbplot
 
-Max Kuhn. Contributions from Jed Wing, Steve Weston, Andre Williams, Chris Keefer, Allan Engelhardt, Tony Cooper, Zachary Mayer, Brenton Kenkel, the R Core Team, Michael Benesty, Reynald Lescarbeau, Andrew Ziem, Luca Scrucca, Yuan Tang, Can Candan and Tyler Hunt. (2017). caret: Classification and Regression Training. R package version 6.0-78. https://CRAN.R-project.org/package=caret
+Max Kuhn (2017). caret: Classification and Regression Training. R package version 6.0-78. https://CRAN.R-project.org/package=caret

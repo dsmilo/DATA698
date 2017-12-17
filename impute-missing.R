@@ -1,8 +1,8 @@
 library(tidyverse)
 
 # investigate missing reported values ##########################################
-# set up variable to flag imputed & method
-eo88_imp <- eo88 %>% mutate(Imputed = "")
+# set up df to flag imputed & method
+eo88_imp <- eo88 %>% mutate(Imputed = character(nrow(eo88)))
 
 # investigate distribution of Use values by SFY
 ggplot(eo88_imp, aes(x = SFY, y = Use)) + geom_boxplot()
@@ -16,10 +16,10 @@ eo88_imp %>%
   filter(ESPLocationID %in% extremes$ESPLocationID, Fuel %in% extremes$Fuel) %>%
   ggplot(aes(x = Month, y = Use)) +
   geom_line() +
-  facet_wrap(~ AccountNumber, scales = "free_y")
+  facet_wrap(ESPLocationID ~ AccountNumber, scales = "free_y")
 
+# same account: ESP 324; Electricity, grid purchase; Electric-291010012800006
 # sum two extreme values & split across two months (2011-01-01 & 2011-02-01)
-## same account: ESP 324; Electricity, grid purchase; Electric-291010012800006
 
 eo88_imp <- eo88_imp %>%
   mutate(Imputed = replace(Imputed, which(Use %in% extremes$Use), "manual"),
@@ -31,7 +31,8 @@ eo88_imp <- eo88_imp %>%
 # explore missing value combinations ###########################################
 # investigate missing values by reported measure
 library(mice)
-md.pattern(eo88_imp)
+library(pander)
+md.pattern(eo88_imp) %>% pander()
 
 # viz missing
 VIM::aggr(eo88_imp)
