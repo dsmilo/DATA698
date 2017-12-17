@@ -1,5 +1,5 @@
 ---
-title: 'DATA 698 Report: Energy Analytics'
+title: "Executive Order 88 Energy Analytics & Data Cleansing"
 author: "Dan Smilowitz"
 output: 
   pdf_document: 
@@ -57,17 +57,15 @@ eo88 <- read_csv("data/2017-10-26_nyem-eo88_consumption-all-sfy.csv")
 
 
 ### Building Data
-The building data set contains 126 columns, many of which correspond to reporting fields for each fiscal year.  There also a fair number of fields corresponding to building information independent of fiscal year.  To make more efficient use of storage, the data is converted using Hadley Wickham's [tidy data](http://vita.had.co.nz/papers/tidy-data.pdf) principles:
+The building data set contains 126 columns, many of which correspond to reporting fields for each fiscal year.  There also a fair number of fields corresponding to building information independent of fiscal year.  To make more efficient use of storage, the data was converted using Hadley Wickham's [tidy data](http://vita.had.co.nz/papers/tidy-data.pdf) principles:
 
-  - Data corresponding to each State Fiscal Year (SFY) are "gathered" to be represented as a field-value pair
-  - SFY is extracted from each field name & stored as the SFY for each measure
-  - Any duplicated entries are removed
-  - SFY-dependent fields are "spread" so that each field is a column and has a value for each SFY
-  - Spaces are removed from all field names to make references simpler
+  - Data corresponding to each State Fiscal Year (SFY) was "gathered" to be represented as a field-value pair
+  - SFY was extracted from each field name & stored as the SFY for each measure
+  - Any duplicated entries were removed
+  - SFY-dependent fields were "spread" so that each field is a column and has a value for each SFY
+  - Spaces were removed from all field names to make references simpler
 
 ```{r tidy-bldg}
-# library(stringr) # not necessary for tidyverse version >= 1.2
-
 # tidy data that changes by SFY
 bldg <- bldg %>%
   gather(Field, Value,
@@ -90,7 +88,7 @@ bldg <- bldg %>%
 names(bldg) <- str_replace_all(names(bldg), " ", "")
 ```
 
-Building metadata that remains constant and building data that may change by fiscal year are separated into two tables to join like operations and further optimize use of storage.  The primary key for each building is `ESPLocationID`; as such, this field is contained in both tables.
+Building metadata that remains constant and building data that may change by fiscal year were separated into two tables to join like operations and further optimize use of storage.  The primary key for each building is `ESPLocationID`; as such, this field is contained in both tables.
 ```{r split-bldg}
 # create two dfs -- one with fixed data & hierarchy; other with SFY data
 bldg_meta <- bldg %>% select(ESPLocationID, NYEMSystemID, AgencyName:NYSNOAAClimateRegion)
@@ -98,7 +96,7 @@ bldg_sfy  <- bldg %>% select(ESPLocationID, Status, SFY:`WeeklyOperatingHours(Ho
 ```
 
 #### Fixed Building Metadata
-The building metadata requires only minor cleanup -- removing duplicate entries (arising from the repeating of these fields across fiscal years) and the renaming of fields for enhanced clarity in naming convention.
+The building metadata required only minor cleanup -- removing duplicate entries (arising from the repeating of these fields across fiscal years) and the renaming of fields for enhanced clarity in naming convention.
 ```{r clean-bldg-meta}
 # remove duplicates from SFY duplication
 bldg_meta <- distinct(bldg_meta)
@@ -117,14 +115,14 @@ This fixed building metadata table is now far more compact, containing only 12 v
 
 
 #### Variable Building Data
-Building data varying across fiscal years requires additional cleanup, as the names of fields are lengthy and not all variables are stored as the correct data type due to earlier transformations.  The following transformations are performed:
+Building data varying across fiscal years required additional cleanup, as the names of fields are lengthy and not all variables are stored as the correct data type due to earlier transformations.  The following transformations were performed:
 
-  - The redundant characters "SFY" are removed from the `SFY` field
-  - Field names are adjusted:
-    - Parentheses are removed from all field names
-    - Long names are shortened to be more managable
-  - The unused `Type` field is removed
-  - SFY-reported fields are converted from character to numeric
+  - The redundant characters "SFY" were removed from the `SFY` field
+  - Field names were adjusted:
+    - Parentheses were removed from all field names
+    - Long names were shortened to be more managable
+  - The unused `Type` field was removed
+  - SFY-reported fields were converted from character to numeric
 
 ```{r clean-bldg-sfy}
 # remove "SFY" from SFY field
@@ -159,7 +157,7 @@ This table is now far more reasonable for processing, and is properly tided and 
 
 
 ### Consumption Data
-The reported consumption dataset contains roughly 177,000 rows and 16 columns.  As with the two building datasets above, field names are modified to remove any spaces or parentheses and shortened to be more concise.  Fuel and units of measure of reported usage are reported as a single field; these are separated into separate fields to enable later analysis.
+The reported consumption dataset contains roughly 177,000 rows and 16 columns.  As with the two building datasets above, field names were modified to remove any spaces or parentheses and shortened to be more concise.  Fuel and units of measure of reported usage are reported as a single field; these were separated into separate fields to enable later analysis.
 ```{r eo88-names}
 # clean up eo88 names
 names(eo88) <- str_replace_all(names(eo88), " ", "")
@@ -187,7 +185,7 @@ $$EUI = \frac{Energy\ Use}{Area}$$
 
 Reported usage values span seven different units.  In order to create a unified view of EUI across all fuels, all reported usage must be converted to a single unit of measure.  The standard units for measuring EUI are thousands of British thermal units (kBtu) -- Energy Star Portfolio Manager provides extensive [Thermal Energy Converstions](https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf) technical reference to handle these conversions.
 
-Progress towards EO88 goals is measured using *source EUI*, which takes into account the total energy needed to make the energy used available (i.e. the amount of raw fuel needed to meet the consumption need).  Therefore, the kBtu must be converted from site energy use to source energy use.  Energy Star Portfolio Manager also provides a [Source Energy](https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf) technical reference, which shows that these conversion factors vary by fuel type.  These conversion factors vary over time based on changes in power generation.  To avoid changes in conversion of reported values between fiscal years, the BuildSmart NY team uses a fixed conversion table for all years; this table is used for conversion.
+Progress towards EO88 goals is measured using *source EUI*, which takes into account the total energy needed to make the energy used available (i.e. the amount of raw fuel needed to meet the consumption need).  Therefore, the kBtu must be converted from site energy use to source energy use.  Energy Star Portfolio Manager also provides a [Source Energy](https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf) technical reference, which shows that these conversion factors vary by fuel type.  These conversion factors vary over time based on changes in power generation.  To avoid changes in conversion of reported values between fiscal years, the BuildSmart NY team uses a fixed conversion table for all years; this table was used for conversion.
 ```{r souce-kbtu}
 # read in converstion table to source kBtu (adapted from epa portfolio mgr)
 eui_conv <- read_csv("data/2017-11-13_epa-portfolio-mgr_conversion-factors.csv")
@@ -206,7 +204,7 @@ eo88 <- eo88 %>%
 
 
 #### Removal of Redundant Data
-The first seven of the 16 variables in the consumption data are also included in the building data.  Following conversion to source kBtu, these variables are removed (with the exception of `ESPLocationID`) to enforce normalization.  Additionally, the empty `Rate/ServiceClassification` is removed, as is the redundant variable containing the fuel & units (in favor of the separated `Fuel` and `Units` variables).
+The first seven of the 16 variables in the consumption data are also included in the building data.  Following conversion to source kBtu, these variables were removed (with the exception of `ESPLocationID`) to enforce normalization.  Additionally, the empty `Rate/ServiceClassification` was removed, as was the redundant variable containing the fuel & units (in favor of the separated `Fuel` and `Units` variables).
 ```{r eo88-select-vars}
 # remove duplicated bldg data (& empty rate/sc) -- retrieve using esp id
 eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
@@ -215,12 +213,12 @@ eo88 <- eo88 %>% select(ESPLocationID, Parent, Utility, AccountNumber,
 
 
 #### Changes in Campus Reporting
-One of the fields in the consumption data is `Parent` -- this indicates relationships between facilities where one facility may be a sub-facility of another (such as a college campus or office plaza).  Investigation of the consumption data reveals that not all `ESPLocationID` values supplied in the consumption data have associated values in the building data (fixed or variable).  Discussion with the BuildSmart NY team revealed that this occurs in two cases:
+One of the fields in the consumption data is `Parent` -- this indicates relationships between facilities where one facility may be a sub-facility of another (such as a college campus or office plaza).  Investigation of the consumption data revealed that not all `ESPLocationID` values supplied in the consumption data have associated values in the building data (fixed or variable).  Discussion with the BuildSmart NY team revealed that this occurs in two cases:
 
   - One facility with a number of sub-facilities was exempt from EO88 reporting & compliance
   - Many large college campuses moved from site-level reporting to campus-level reporting
   
-Those sites that changed to campus-level reporting and are not included in the building metadata are changed to the `ESPLocationID` of the parent facility so that their information can be accurately included in calculation of performance in earlier fiscal years.  The `Parent` field is then removed, as it is no longer relevant.
+Those sites that changed to campus-level reporting and are not included in the building metadata were changed to the `ESPLocationID` of the parent facility so that their information can be accurately included in calculation of performance in earlier fiscal years.  The `Parent` field was then removed, as it is no longer relevant.
 ```{r parent-facilities}
 # remove data for irrelevant facilities with parent esp 5106
 eo88 <- eo88 %>%
@@ -262,7 +260,7 @@ These values must be converted to contain the reported usage in a given month so
   - The number of days the billed value overlaps each month encompassed
   - The prorated share of usage per month, assuming flat usage through the period
 
-This function is applied to each reported consumption value.  During application, the State Fiscal Year for each month is also added, and the bill start & end dates removed.  Finally, months falling outside the required reporting period (SFY 2010-11 through SFY 2016-17) are excluded.
+This function was applied to each reported consumption value.  During application, the State Fiscal Year for each month is also added, and the bill start & end dates removed.  Finally, months falling outside the required reporting period (SFY 2010-11 through SFY 2016-17) were excluded.
 ```{r bill-to-cal, eval=FALSE}
 # function to prorate billed dates to calendar dates & number of days in month
 bill_to_cal <- function(start_dt, end_dt) {
@@ -293,7 +291,7 @@ eo88 <- eo88 %>%
                       paste(year(Month), str_sub(year(Month) + 1, -2, -1), sep = "-"),
                       paste(year(Month) - 1, str_sub(year(Month), -2, -1), sep = "-")))
 
-# remove months before SFY 10-11 & after FY 16-17
+# remove months before SFY 10-11 & after FY 16-17 -- not run in report due to above conversion not being run
 eo88 <- eo88 %>%
   filter(Month >= ymd("20100401"), Month <= ymd("20170331"))
 ```
@@ -303,11 +301,128 @@ eo88 <- eo88 %>%
 load("data/data-prep.Rda")
 ```
 
-Following this conversion to calendar dates, the building and consumption data are sufficiently prepared for analysis, beginning with an exploration of missing data.
+Following this conversion to calendar dates, the building and consumption data are sufficiently prepared for analysis.
 
-## Data Mining & Imputation
+## Data Cleansing: Initial Approach
+As identified in the *Problem Description* section above, a major issue encountered in analyzing and reporting EO88 performance is the presence of missing data, as well as possible abberant reported data.  In order to identify reported values in need of correction, a function is created to flag data points that met any of three criteria:
 
-Data Exploration
+  - Missing usage data
+  - Reported usage < 0
+  - Reported usage that is an outlier for a given facility & fuel
+
+```{r model-data-flag}
+# create function to detect outliers
+is.outlier <- function(out_var) {
+  out_var < quantile(out_var, 0.25, na.rm = TRUE) - 1.5 * IQR(out_var, na.rm = TRUE) |
+    out_var > quantile(out_var, 0.75, na.rm = TRUE) + 1.5 * IQR(out_var, na.rm = TRUE)
+}
+
+# flag values needing imputation (missing or outlier)
+model_data <- eo88 %>%
+  group_by(ESPLocationID, Fuel, Units) %>%
+  mutate(Flagged = is.na(Use) | is.outlier(Use) | Use < 0) %>%
+  ungroup()
+```
+
+The `caret` package was utilized to model more appropriate values for those values flagged.  Weather data from the National Climatic Data Center's [Divisional Data](https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp) was utilized to model this data using an array of methods:
+```{r weather-import}
+# get lookup values for climate regions
+regions <- data_frame(
+  Division = 1:10,
+  ClimateRegion = c("Western Plateau", "Eastern Plateau", "Northern Plateau",
+                    "Coastal", "Hudson Valley", "Mohawk Valley", "Champlain Valley",
+                    "St. Lawrence Valley", "Great Lakes", "Central Lakes")
+)
+
+# read in NOAA weather data
+weather <- read_csv("data/2017-11-14_NOAA_cdo-div-weather-indices.txt",
+                    col_types = "iicnnnnnniinnnnnnnnn?")
+## https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
+
+# convert weather YearMonth to date; drop extra columns
+weather <- weather %>%
+  mutate(YearMonth = ymd(paste0(YearMonth, "01"))) %>%
+  rename(Month = YearMonth) %>%
+  select(-StateCode, -X21)
+```
+
+  - Training a number of models on the entire as-is dataset
+    - 4 linear models
+    - 6 nonlinear models
+    - 5 tree-based models
+  - Training a k-nearest neighbors (KNN) model on the entire dataset
+    - Using dummy variables for fuel & building type
+    - Using transformed predictors
+      - Centered & scaled
+      - KNN-imputed
+      - Highly-correlated & zero-variance predictors removed
+  - Training a KNN model for each location
+  - Training a KNN model for each fuel
+  - Training a Cubist model for each location & fuel combination
+
+Additionally, imputation was attempted using only data for a given facility & fuel in a given calendar month (with a window of $\pm$ 1 month added).
+```{r model-data}
+# join reporting data with bldg metadata, weather, bldg sfy data
+model_data <- model_data %>%
+  left_join(bldg_meta, by = "ESPLocationID") %>%
+  left_join(regions, by = "ClimateRegion") %>%
+  left_join(weather, by = c("Division", "Month")) %>%
+  left_join(bldg_sfy %>% select(ESPLocationID, SFY, FloorArea, Type1),
+            by = c("ESPLocationID", "SFY"))
+```
+
+Despite the varied approaches employed and hundreds of models fit to the data, the errors returned by resampling and evaluation against test sets were very high, often as high as the order of $1\times10^9$ kBtu.  To identify possible causes of this error, a facility with particularly high error across the models fit (`ESPLocationID` 92) was selected for investigation.  First, a boxplot of the non-missing usage values by fuel was created, separated by flagged & un-flagged values:
+```{r 92-boxplot}
+model_data %>%
+  filter(ESPLocationID == 92, !is.na(Use)) %>%
+  ggplot(aes(x = Flagged, y = Use, fill = Flagged)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_y_continuous(trans = "log10", breaks = 10^(2:7),
+                     labels = c(100, "1k", "10k", "100k", "1M", "10M")) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank()) +
+  facet_wrap(~ Fuel, scales = "free_y") +
+  labs(title = "Distribution of reported usage values by fuel",
+       subtitle = "Non-missing values for ESPLocationID 92")
+```
+
+This plot appears to show a relationship between fuel type, usage, and flagged status. For electricity, all but 3 values were over 100,000 kBtu, and none were flagged for correction.  For natural gas and steam, all values over roughly 100,000 kBtu were flagged for correction, and none below this threshold were flagged.  This was further investigated by creating a histogram of non-missing natural gas usage, colored by flag value;
+```{r 92-histogram}
+model_data %>%
+  filter(ESPLocationID == 92, Fuel == "Natural Gas") %>%
+  ggplot(aes(x = Use, y = ..count.. / sum(..count..), fill = Flagged)) +
+  geom_histogram(bins = 25, col = "black") +
+  scale_x_continuous(trans = "log10", breaks = 10^(2:8),
+                     labels = c(100, "1k", "10k", "100k", "1M", "10M", "100M")) +
+  scale_y_continuous("", labels = scales::percent) +
+  theme(panel.grid.minor = element_blank(), legend.position = "top") +
+  labs(title = "Distribution of monthly natural gas reported usage",
+       subtitle = "Non-missing values for ESPLocationID 92")
+```
+
+This appears to confirm the bias towards flagging larger reported usage values.  This was interpreted as a side effect of the function used for flagging non-missing values -- since the scale of values varies so widely for some fuels, values two orders of magnitude higher than others will be flagged as outliers given the standard criteria of $x < Q1(X) - 1.5IQR(X)$ or $x > Q3(X) + 1.5IQR(X)$.  In order to address this, a log-transformation of reported usage values is considered prior to flagging data for correction.  Given that the two fuels identified above are thermal fuels with expected seasonal usage, the flagged status for natural gas usage is also investigated by month:
+```{r 92-area}
+model_data %>%
+  filter(ESPLocationID == 92, !is.na(Use), Fuel == "Natural Gas",
+         !SFY %in% c("2010-11", "2011-12", "2012-13")) %>%
+  group_by(Month) %>%
+  summarize(true = sum(Flagged == TRUE) / n(),
+            false = 1 - true) %>%
+  ungroup() %>%
+  gather(Flagged, Share, -(Month)) %>%
+  mutate(Flagged = if_else(Flagged == "true", TRUE, FALSE)) %>%
+  ggplot(aes(Month, Share, fill = Flagged, col = Flagged)) +
+  geom_area() +
+  theme(legend.position = "top") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_date(NULL, date_breaks = "3 months", date_labels = "%Y\n%m") +
+  labs(title = "Monthly share of natural gas usage values flagged for correction",
+       subtitle = "Non-missing values for ESPLocationID 92")
+```
+
+This plot shows clear seasonality, with far more values flagged for correction in winter months.  This makes sense given the earlier observation of higher values being flagged, as natural gas is intuitively expected to have higher usage in winter months given its use for heating.
+
+These patterns, as well as the poor accuracy of attempted data correction, were brought to the BuildSmart NY and NYEM teams to help identify a solution to improve accuracy and reduce any bias.  The NYEM team, after conversation with the vendor that provided the data extract, revealed that **all provided values has already been verified by the reporting agencies.**  This information changed the direction of the approach: data no longer needed to be flagged for imputation; only missing values needed to be filled.
+
 
 ### Missing Value Patterns
 
@@ -339,6 +454,8 @@ Data Exploration
 
 ### Analysis by Segments
 
+
+## Future Improvements
 
 ## Acknowledgements
 Thank you to Honey Berk for her guidance in overcoming the myriad challenges encountered throughout the course of this project.  Thank you also to Gabe Cowles, Ryan Droege, Srini Pusuluri, Joe O'Connor, Julie Reardon, Prasad Surapaneni, and Godly Varghese for their assistance in the acquisition and understanding of the data used for this project.  
@@ -377,3 +494,4 @@ BuildSmart NY (2016).  EO88 2016 Annual Report. https://www.nypa.gov/-/media/nyp
 
 Edgar Ruiz (2017). dbplot: Simplifies Plotting Data Inside Databases. R package version 0.1.1. https://CRAN.R-project.org/package=dbplot
 
+Max Kuhn. Contributions from Jed Wing, Steve Weston, Andre Williams, Chris Keefer, Allan Engelhardt, Tony Cooper, Zachary Mayer, Brenton Kenkel, the R Core Team, Michael Benesty, Reynald Lescarbeau, Andrew Ziem, Luca Scrucca, Yuan Tang, Can Candan and Tyler Hunt. (2017). caret: Classification and Regression Training. R package version 6.0-78. https://CRAN.R-project.org/package=caret

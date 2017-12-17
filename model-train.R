@@ -1,15 +1,49 @@
+# detect missing or abberant values; prep for imputation  #####################
+
+# create function to detect outliers
+is.outlier <- function(out_var) {
+  out_var < quantile(out_var, 0.25, na.rm = TRUE) - 1.5 * IQR(out_var, na.rm = TRUE) |
+    out_var > quantile(out_var, 0.75, na.rm = TRUE) + 1.5 * IQR(out_var, na.rm = TRUE)
+}
+
+# flag values needing imputation (missing or outlier)
+model_data <- eo88 %>%
+  group_by(ESPLocationID, Fuel, Units) %>%
+  mutate(Flagged = is.na(Use) | is.outlier(Use) | Use < 0) %>%
+  ungroup()
+
+# import weather data for imputation ###########################################
+# get lookup values for climate regions
+regions <- data_frame(
+  Division = 1:10,
+  ClimateRegion = c("Western Plateau", "Eastern Plateau", "Northern Plateau",
+                    "Coastal", "Hudson Valley", "Mohawk Valley", "Champlain Valley",
+                    "St. Lawrence Valley", "Great Lakes", "Central Lakes")
+)
+
+# read in NOAA weather data
+weather <- read_csv("data/2017-11-14_NOAA_cdo-div-weather-indices.txt",
+                    col_types = "iicnnnnnniinnnnnnnnn?")
+## https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
+
+# convert weather YearMonth to date; drop extra columns
+weather <- weather %>%
+  mutate(YearMonth = ymd(paste0(YearMonth, "01"))) %>%
+  rename(Month = YearMonth) %>%
+  select(-StateCode, -X21)
+
 # prepare data for modeling ####################################################
 # join reporting data with bldg metadata, weather, bldg sfy data
-model_data <- eo88 %>%
+model_data <- model_data %>%
   left_join(bldg_meta, by = "ESPLocationID") %>%
   left_join(regions, by = "ClimateRegion") %>%
   left_join(weather, by = c("Division", "Month")) %>%
   left_join(bldg_sfy %>% select(ESPLocationID, SFY, FloorArea, Type1),
             by = c("ESPLocationID", "SFY"))
 
-# filter for not imputed; pull fields of interest & convert character to numeric
+# filter for not Flagged; pull fields of interest & convert character to numeric
 model_data_1 <- model_data %>%
-  filter(Imputed == FALSE) %>%
+  filter(Flagged == FALSE) %>%
   select(ESPLocationID, Fuel, Month, Agency, SFY, Agency, ZipCode,
          YearBuilt, Division:TMAX, FloorArea, Type1, Use) %>%
   mutate_if(is.character, function(x) as.numeric(as.factor(x)))
@@ -71,7 +105,7 @@ for (m in my_models) {
   print(names(warnings())[which(names(warnings()) != "Setting row names on a tibble is deprecated.")])
 }
 
-linear_results <- run_models(c("lm", "ridge", "pls")) #rlm
+linear_results <- run_models(c("lm", "ridge", "pls", "rlm"))
 nonlinear_results <- run_models(c("knn", "nnet", "earth", "svmRadial", "svmLinear", "svmPoly"))
 tree_results <- run_models(c("rpart2", "M5Rules", "rf", "gbm", "Cubist"))
 
@@ -102,7 +136,7 @@ model_data_2 <- eo88 %>%
   left_join(weather, by = c("Division", "Month")) %>%
   left_join(bldg_sfy %>% select(ESPLocationID, SFY, FloorArea, Type1),
             by = c("ESPLocationID", "SFY")) %>%
-  filter(Imputed == FALSE) %>%
+  filter(Flagged == FALSE) %>%
   select(ESPLocationID, Fuel, Month, ZipCode,
          YearBuilt, Division:TMAX, FloorArea, Type1, Use)
 
@@ -157,28 +191,28 @@ registerDoSEQ()
 library(dummies)
 
 # get locations with missing data
-esp_impute <- model_data %>% filter(Imputed == TRUE) %>% pull(ESPLocationID) %>% unique()
+esp_impute <- model_data %>% filter(Flagged == TRUE) %>% pull(ESPLocationID) %>% unique()
 
 # initalize model container
 esp_knn <- lst()
 for (esp in esp_impute) {
   # join weatehr data
   loc_data <- eo88 %>%
-    filter(ESPLocationID == esp, Imputed == FALSE) %>%
+    filter(ESPLocationID == esp, Flagged == FALSE) %>%
     left_join(bldg_meta, by = "ESPLocationID") %>%
     left_join(regions, by = "ClimateRegion") %>%
     left_join(weather, by = c("Division", "Month")) %>%
     left_join(bldg_sfy %>% select(ESPLocationID, SFY, FloorArea, Type1),
               by = c("ESPLocationID", "SFY"))
   # create dummies
-  loc_fuel <- dummy(loc_data %>% filter(Imputed == FALSE) %>% .$Fuel)
-  loc_type <- dummy(loc_data %>% filter(Imputed == FALSE) %>% .$Type1)
+  loc_fuel <- dummy(loc_data %>% filter(Flagged == FALSE) %>% .$Fuel)
+  loc_type <- dummy(loc_data %>% filter(Flagged == FALSE) %>% .$Type1)
   # get non-categorical predictors & response
   loc_pred <- loc_data %>%
-    filter(Imputed == FALSE) %>%
+    filter(Flagged == FALSE) %>%
     select(Month, PCP:TMAX, FloorArea) %>%
     mutate(Month = month(Month))
-  loc_resp <- loc_data %>% filter(Imputed == FALSE) %>% pull(Use)
+  loc_resp <- loc_data %>% filter(Flagged == FALSE) %>% pull(Use)
   # transform predictors with centering/scaling/BoxCox, add dummy vars
   loc_preprocess <- preProcess(as.data.frame(loc_pred),
                                method = c("medianImpute", "zv", "center", "scale", "BoxCox"))
@@ -220,7 +254,7 @@ esp_fuel_knn <- lst()
 for (esp in esp_impute) {
   # join weatehr data
   loc_data <- eo88 %>%
-    filter(ESPLocationID == esp, Imputed == FALSE) %>%
+    filter(ESPLocationID == esp, Flagged == FALSE) %>%
     left_join(bldg_meta, by = "ESPLocationID") %>%
     left_join(regions, by = "ClimateRegion") %>%
     left_join(weather, by = c("Division", "Month")) %>%
@@ -231,10 +265,10 @@ for (esp in esp_impute) {
   for (fuel in unique(loc_data$Fuel)) {
     # get predictors & response
     loc_pred <- loc_data %>%
-      filter(Imputed == FALSE, Fuel == fuel) %>%
+      filter(Flagged == FALSE, Fuel == fuel) %>%
       select(Month, PCP:TMAX, FloorArea) %>%
       mutate(Month = month(Month))
-    loc_resp <- loc_data %>% filter(Imputed == FALSE, Fuel == fuel) %>% pull(Use)
+    loc_resp <- loc_data %>% filter(Flagged == FALSE, Fuel == fuel) %>% pull(Use)
     # transform predictors with centering/scaling/BoxCox, add dummy vars
     loc_preprocess <- preProcess(as.data.frame(loc_pred),
                                  method = c("medianImpute", "zv", "center", "scale", "BoxCox"))
@@ -301,16 +335,16 @@ esp_fuel_knn_results %>%
 
 
 # simple median of previous months (+-1) #######################################
-# get data for testing; keep non-imputed to test accuracy
+# get data for testing; keep non-Flagged to test accuracy
 med_data <- eo88 %>%
   filter(ESPLocationID %in% esp_impute) %>%
-  select(ESPLocationID, Fuel, Month, Use, Imputed) %>%
+  select(ESPLocationID, Fuel, Month, Use, Flagged) %>%
   mutate(month_no = month(Month),
-         use_imputed = numeric(nrow(.)))
+         use_Flagged = numeric(nrow(.)))
 
 for (i in 1:nrow(med_data)) {
   months_include <- month(eo88$Month[i] + months(-1:1))
-  med_data$use_imputed[i] <- med_data %>%
+  med_data$use_Flagged[i] <- med_data %>%
     filter(ESPLocationID == ESPLocationID[i],
            Fuel == Fuel[i],
            month_no %in% months_include) %>%
@@ -318,26 +352,26 @@ for (i in 1:nrow(med_data)) {
     median(na.rm = TRUE)
 }
 
-imp_med <- med_data %>% filter(Imputed == FALSE)
-RMSE(imp_med$use_imputed, obs = imp_med$Use, na.rm = TRUE)
+imp_med <- med_data %>% filter(Flagged == FALSE)
+RMSE(imp_med$use_Flagged, obs = imp_med$Use, na.rm = TRUE)
 
 med_data %>%
-  filter(Imputed == FALSE) %>%
+  filter(Flagged == FALSE) %>%
   group_by(ESPLocationID, Fuel) %>%
-  summarize(RMSE = RMSE(use_imputed, Use, na.rm = TRUE),
+  summarize(RMSE = RMSE(use_Flagged, Use, na.rm = TRUE),
             RMSE_pct = RMSE / mean(Use, na.rm = TRUE)) %>%
   summary(RMSE_pct)
 
 med_data %>%
-  filter(Imputed == FALSE) %>%
+  filter(Flagged == FALSE) %>%
   group_by(ESPLocationID, Fuel) %>%
-  summarize(RMSE = RMSE(use_imputed, Use, na.rm = TRUE)) %>%
+  summarize(RMSE = RMSE(use_Flagged, Use, na.rm = TRUE)) %>%
   ggplot(aes(RMSE, ..count../sum(..count..))) +
   geom_histogram(bins = 50, alpha = 0.5, col = "black") +
   scale_x_continuous(trans = "log10") +
   scale_y_continuous(labels = scales::percent) +
   labs(title = "Performance for median imputation",
-       subtitle = "Imputed using median of similar months for each location & fuel needing imputation",
+       subtitle = "Flagged using median of similar months for each location & fuel needing imputation",
        y = "Percent")
 
 
@@ -350,7 +384,7 @@ esp_fuel_cubist <- lst()
 for (esp in esp_impute) {
   # join weatehr data
   loc_data <- eo88 %>%
-    filter(ESPLocationID == esp, Imputed == FALSE) %>%
+    filter(ESPLocationID == esp, Flagged == FALSE) %>%
     left_join(bldg_meta, by = "ESPLocationID") %>%
     left_join(regions, by = "ClimateRegion") %>%
     left_join(weather, by = c("Division", "Month")) %>%
@@ -365,10 +399,10 @@ for (esp in esp_impute) {
   for (fuel in unique(loc_data$Fuel)) {
     # get predictors & response
     loc_pred <- loc_data %>%
-      filter(Imputed == FALSE, Fuel == fuel) %>%
+      filter(Flagged == FALSE, Fuel == fuel) %>%
       select(Month, PCP:TMAX, FloorArea) %>%
       mutate(Month = month(Month))
-    loc_resp <- loc_data %>% filter(Imputed == FALSE, Fuel == fuel) %>% pull(Use)
+    loc_resp <- loc_data %>% filter(Flagged == FALSE, Fuel == fuel) %>% pull(Use)
     # transform predictors with centering/scaling/BoxCox, add dummy vars
     loc_preprocess <- preProcess(as.data.frame(loc_pred),
                                  method = c("medianImpute", "zv", "center", "scale", "BoxCox"))
@@ -416,10 +450,11 @@ esp_fuel_cubist_results <- data_frame(loc, fuel, resampled, test)
 
 
 # troubleshoot errors ##########################################################
-eo88 %>%
+# summary statistics for Use by flagged & not flagged
+model_data %>%
   filter(ESPLocationID == 92, Fuel == "Natural Gas") %>%
-  select(Use, Imputed) %>%
-  group_by(Imputed) %>%
+  select(Use, Flagged) %>%
+  group_by(Flagged) %>%
   summarize(min = min(Use, na.rm = TRUE),
             max = max(Use, na.rm = TRUE),
             sd = sd(Use, na.rm = TRUE),
@@ -427,82 +462,89 @@ eo88 %>%
             median = median(Use, na.rm = TRUE),
             n = n())
 
-eo88 %>%
+# histogram of natural gas Use colored by flagged
+model_data %>%
   filter(ESPLocationID == 92, Fuel == "Natural Gas") %>%
-  ggplot(aes(x = Use, y = ..count.. / sum(..count..), fill = Imputed)) +
+  ggplot(aes(x = Use, y = ..count.. / sum(..count..), fill = Flagged)) +
   geom_histogram(bins = 25, col = "black") +
   scale_x_continuous(trans = "log10", breaks = 10^(2:8),
                      labels = c(100, "1k", "10k", "100k", "1M", "10M", "100M")) +
   scale_y_continuous("", labels = scales::percent) +
   theme(panel.grid.minor = element_blank(), legend.position = "top")
 
-eo88 %>%
+# boxplot of non-missing Use by fuel colored by flagged
+model_data %>%
   filter(ESPLocationID == 92, !is.na(Use)) %>%
-  ggplot(aes(x = Imputed, y = Use, fill = Imputed)) +
-  geom_violin(show.legend = FALSE, alpha = 0.5) +
+  ggplot(aes(x = Flagged, y = Use, fill = Flagged)) +
+  geom_boxplot(show.legend = FALSE) +
   scale_y_continuous(trans = "log10", breaks = 10^(2:7),
                      labels = c(100, "1k", "10k", "100k", "1M", "10M")) +
   theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank()) +
   facet_wrap(~ Fuel, scales = "free_y")
 
-eo88 %>%
+# violin plot of non-missing natural gas Use by SFY & month colored by flagged
+model_data %>%
   filter(ESPLocationID == 92, !is.na(Use), Fuel == "Natural Gas",
          !SFY %in% c("2010-11", "2011-12", "2012-13")) %>%
-  ggplot(aes(x = Imputed, y = Use, fill = Imputed)) +
+  ggplot(aes(x = Flagged, y = Use, fill = Flagged)) +
   geom_violin() +
   scale_y_continuous(trans = "log10") +
   scale_x_discrete(NULL, NULL, NULL) +
   facet_grid(SFY ~ month(Month)) +
   theme(legend.position = "top")
 
+# mosaic plot of non-missing natural gas Use by SFY & month colored by flagged
 library(ggmosaic)
-eo88 %>%
+model_data %>%
   filter(ESPLocationID == 92, !is.na(Use), Fuel == "Natural Gas",
          !SFY %in% c("2010-11", "2011-12", "2012-13")) %>%
-  group_by(SFY, Month, Imputed) %>%
+  group_by(SFY, Month, Flagged) %>%
   summarize(n = n()) %>%
   ungroup() %>%
   mutate(Month = factor(month(Month), levels = c(4:12, 1:3))) %>%
   ggplot() +
-  geom_mosaic(aes(weight = n, x = product(1), fill = Imputed), alpha = 1, col = "black") +
+  geom_mosaic(aes(weight = n, x = product(1), fill = Flagged), alpha = 1, col = "black") +
   facet_grid(SFY ~ Month) +
   theme(legend.position = "top") +
   scale_y_continuous(labels = scales::percent) +
   xlab(NULL) +
   theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), panel.grid = element_blank())
 
-eo88 %>%
+# area plot of non-missing natural gas use by SFY & month colored by flagged
+model_data %>%
   filter(ESPLocationID == 92, !is.na(Use), Fuel == "Natural Gas",
          !SFY %in% c("2010-11", "2011-12", "2012-13")) %>%
   mutate(Month = factor(month(Month), levels = c(4:12, 1:3))) %>%
   group_by(SFY, Month) %>%
-  summarize(true = sum(Imputed == TRUE) / n(),
+  summarize(true = sum(Flagged == TRUE) / n(),
             false = 1 - true) %>%
   ungroup() %>%
-  gather(Imputed, Share, -(SFY:Month)) %>%
-  mutate(Imputed = if_else(Imputed == "true", TRUE, FALSE)) %>%
+  gather(Flagged, Share, -(SFY:Month)) %>%
+  mutate(Flagged = if_else(Flagged == "true", TRUE, FALSE)) %>%
   ggplot() +
-  geom_area(aes(Month, Share, fill = Imputed, group = interaction(SFY, Imputed)), col = "black") +
+  geom_area(aes(Month, Share, fill = Flagged, group = interaction(SFY, Flagged)), col = "black") +
   facet_grid(SFY ~ .) +
   theme(legend.position = "top") +
   scale_y_continuous(labels = scales::percent)
 
-eo88 %>%
+# area plot of non-missing natural gas use by month colored by flagged
+model_data %>%
   filter(ESPLocationID == 92, !is.na(Use), Fuel == "Natural Gas",
          !SFY %in% c("2010-11", "2011-12", "2012-13")) %>%
   group_by(Month) %>%
-  summarize(true = sum(Imputed == TRUE) / n(),
+  summarize(true = sum(Flagged == TRUE) / n(),
             false = 1 - true) %>%
   ungroup() %>%
-  gather(Imputed, Share, -(Month)) %>%
-  mutate(Imputed = if_else(Imputed == "true", TRUE, FALSE)) %>%
-  ggplot(aes(Month, Share, fill = Imputed, col = Imputed)) +
-  geom_area(alpha = 0.75, lwd = 1.5) +
+  gather(Flagged, Share, -(Month)) %>%
+  mutate(Flagged = if_else(Flagged == "true", TRUE, FALSE)) %>%
+  ggplot(aes(Month, Share, fill = Flagged, col = Flagged)) +
+  geom_area() +
   theme(legend.position = "top") +
   scale_y_continuous(labels = scales::percent) +
   scale_x_date(NULL, date_breaks = "3 months", date_labels = "%Y\n%m")
 
-eo88 %>%
+# area plot of natural gas use by SFY & month colored by flagged
+model_data %>%
   filter(ESPLocationID == 92, Fuel == "Natural Gas",
          !SFY %in% c("2010-11", "2011-12", "2012-13")) %>%
   group_by(Month) %>%
