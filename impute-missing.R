@@ -218,28 +218,21 @@ eo88_imp <- eo88_imp %>%
   mutate(Imputed = if_else(is.na(Use) & AccountNumber %in% cost_only$AccountNumber, "zero", Imputed),
          Use = if_else(AccountNumber %in% cost_only$AccountNumber, 0, Use))
 
-### investigate remainings by fuel
+### check remaining numbers missing
 no_use <- no_use %>%
   filter(!AccountNumber %in% cost_only$AccountNumber)
 
-no_use %>%
-  group_by(Fuel, AccountNumber) %>%
-  summarize(n_missing = n()) %>%
-  group_by(Fuel) %>%
-  summarize(n_accounts = n(),
-            n_missing = sum(n_missing)) %>%
-  arrange(desc(n_accounts), desc(n_missing))
-
-### check remaining numbers missing
 table(no_use$MonthDiff)
+
 no_use %>%
+  filter(!is.na(MonthDiff)) %>%
   group_by(MonthDiff, AccountNumber) %>%
   summarize(n_instances = n()) %>%
   group_by(MonthDiff) %>%
   summarize(n_accounts = n(),
             n_instances = sum(n_instances)) %>%
-  arrange(desc(MonthDiff))
-
+  arrange(desc(MonthDiff)) %>%
+  pander()
 
 no_use %>%
   group_by(AccountNumber) %>%
@@ -254,11 +247,21 @@ no_use %>%
   distinct(AccountNumber, ESPLocationID, Fuel, Month) %>%
   nrow()
 
-### check liquid propane -- easiest hit
+### investigate remainings by fuel
+no_use %>%
+  group_by(Fuel, AccountNumber) %>%
+  summarize(n_missing = n()) %>%
+  group_by(Fuel) %>%
+  summarize(n_accounts = n(),
+            n_missing = sum(n_missing)) %>%
+  arrange(desc(n_accounts), desc(n_missing)) %>%
+  pander()
+
+### check propane -- easiest hit
 eo88_imp %>%
   filter(AccountNumber %in% no_use$AccountNumber, Fuel == "Propane and Liquid Propane") %>%
   select(AccountNumber, Month, Use)
-### single missing is 7 montHs after last actual & followed by 0 6 monts later -- ZERO
+### single missing is 7 months after last actual & followed by 0 6 monts later -- ZERO
 eo88_imp <- eo88_imp %>%
   mutate(Imputed = if_else(is.na(Use) & !is.na(Cost) & Fuel == "Propane and Liquid Propane",
                        "zero", Imputed),
@@ -285,9 +288,12 @@ eo88_imp %>%
   geom_point(data = no_use_elec, aes(x = Month, y = 1)) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous(trans = "log10") +
-  theme(legend.position = c(0.85, 0.25))
+  theme(legend.position = c(0.85, 0.25)) +
+  labs(title = "Reported use and cost for electricity grid purchase accounts",
+       subtitle = "For accounts with at least one month missing reported use",
+       caption = "Missing use values represented by black dots")
 
-### 43of 5 show NAs around zero or in last months
+### 3 of 5 show NAs around zero or in last months
 ### likely cancelled accts with remaining charges -- zero out
 ### impute remaining with regression
 no_use_elec <- no_use_elec %>%
@@ -327,7 +333,10 @@ eo88_imp %>%
   geom_point(data = no_use_fuel, aes(x = Month, y = 1)) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous("Value", trans = "log10") +
-  theme(legend.position = "top")
+  theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
+  labs(title = "Reported use and cost for fuel oil #2 accounts",
+       subtitle = "For accounts with at least one month missing reported use",
+       caption = "Missing use values represented by black dots")
 
 ## top 2 legit -- ZERO; reg for others
 no_use_fuel <- no_use_fuel %>%
@@ -371,7 +380,10 @@ eo88_imp %>%
   geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1)) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous("Value", trans = "log10") +
-  theme(legend.position = "top")
+  theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
+  labs(title = "Reported use and cost for natural gas accounts",
+       subtitle = "For accounts with at least four months between missing reported use",
+       caption = "Missing use values represented by black dots")
 
 ### some look to be min bill -- find; get 0 use == const (non-zero) cost
 eo88_imp %>%
@@ -470,6 +482,8 @@ rf_data <- rf_data %>%
   select(-YearBuilt, -Type)
 
 # for imputation, solve doesn't work due to highly correlated vars -- drop TMAX
+corrplot::corrplot(cor(select(rf_data, -AccountNumber, -Use)), tl.col = "black", tl.cex = 0.9)
+
 # convert accountnumber to factor to fill by account
 rf_data <- rf_data %>%
   arrange(AccountNumber, Year, Month) %>%
@@ -556,30 +570,33 @@ reg_imp <- reg_data %>%
 
 # plot to check rf
 rf_data %>%
+  filter(AccountNumber %in% rf_accts[1:4]) %>%
   mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
-  ggplot(aes(x = Month, y = Use)) +
+  ggplot(aes(x = Month, y = Use, col = "Reported")) +
   geom_point() +
   geom_line() +
-  geom_point(data = rf_imp, aes(x = Month, y = Use), col = "red") +
-  facet_wrap(~ AccountNumber, scales = "free")
-
+  geom_point(data = filter(rf_imp, AccountNumber %in% rf_accts[1:4]),
+             aes(x = Month, y = Use, col = "Imputed")) +
+  facet_wrap(~ AccountNumber, scales = "free") +
+  labs(title = "Sample of values imputed with random forest", col = NULL) +
+  scale_color_manual(values = c("Reported" = "black", "Imputed" = "red"))
 
 # plot to check reg
 reg_data %>%
   mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
-  filter(AccountNumber %in% reg_accts[1:4]) %>%
+  filter(AccountNumber %in% reg_accts[c(1, 4, 5, 10)]) %>%
   ggplot(aes(x = Month)) +
   geom_point(aes(y = Use + 1, col = "Use")) +
   geom_line(aes(y = Use + 1, col = "Use")) +
   geom_point(aes(y = Cost + 1, col = "Cost")) +
   geom_line(aes(y = Cost + 1, col = "Cost")) +
-  geom_point(data = filter(reg_imp, AccountNumber %in% reg_accts[1:4]),
-             aes(x = Month, y = Use + 1, col = "NA")) +
+  geom_point(data = filter(reg_imp, AccountNumber %in% reg_accts[c(1, 4, 5, 10)]),
+             aes(x = Month, y = Use + 1, col = "Imputed")) +
   scale_y_log10() +
-  facet_wrap(~ AccountNumber, scales = "free")
+  facet_wrap(~ AccountNumber, scales = "free") +
+  labs(title = "Sample of values imputed with linear regression", col = NULL)
 
-
-# fill imputed values; write to db #############################################
+# fill imputed values ##########################################################
 # pull in imputed values from rf & reg to fill remaining NAs
 eo88_imp <- eo88_imp %>%
   left_join(rf_imp, by = c("AccountNumber", "Month", "Share"),

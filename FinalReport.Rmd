@@ -482,7 +482,7 @@ For the purposes of Executive Order 88 analysis and reporting, demand and cost a
   - Missing use; missing demand; missing cost (618 instances)
   - Missing use; missing demand; reported cost (9302 instances)
 
-Each of these patterns is investigated individually, as the approach to imputing the missing values will likely vary.
+Each of these patterns was investigated individually, as the approach to imputing the missing values was expcted to vary.
 
 ### Reported Demand & Cost
 The instances of missing reported use with reported demand and cost all occur for the same account (*Electric-495520212030000*) in consecutive months (April-October 2012); the demand and cost values for each of these months is zero.  Investigation with NYPA staff reveals that this account did not exist prior to November 2012 -- it is likely that the reported zero demand and cost were back-filled to populate the State Fiscal Year with data.  These use values are imputed with zero and flagged with an `Imputed` tag of *zero*.
@@ -579,26 +579,414 @@ eo88_imp <- eo88_imp %>%
                        0, Use))
 ```
 
-The only rows in the consumption database missing each of use, demand, and cost are now those flagged for imputation using a random forest model:
-```{r aggr-after-tripna}
+
+### Reported Cost; No Demand
+For accounts with entries missing use and demand with reported cost, the number of months between instances of this missingness pattern was investigated.  It was found that many accounts showed zero months between instances, suggesting that these accounts *never* had any use but *always* had a cost -- this is reasonable, as some cost-only accounts exist for non-metered fuels.  These instances represented 83% (419/503) of accounts and 90% (8341/9302) of entries showing this pattern.  These cost-only accounts were imputed with zero and flagged accordingly.
+```{r costonly}
+### investigate month difference
+no_use <- eo88_imp %>%
+  filter(is.na(Use), is.na(Demand), !is.na(Cost)) %>%
+  arrange(ESPLocationID, AccountNumber, Fuel, Month) %>%
+  group_by(ESPLocationID, AccountNumber, Fuel) %>%
+  mutate(MonthDiff = interval(lag(Month), Month) %/% months(1)) %>%
+  ungroup() %>%
+  select(AccountNumber, ESPLocationID, Fuel, Month, MonthDiff)
+
+### some never have any use (either all NA or all zero) -- find these
+cost_only <- eo88_imp %>%
+  filter(AccountNumber %in% unique(no_use$AccountNumber)) %>%
+  group_by(AccountNumber) %>%
+  filter(max(Use, na.rm = TRUE) %in% c(0, -Inf), is.na(Demand), is.na(Use)) %>%
+  ungroup() %>%
+  select(ESPLocationID, Fuel, AccountNumber, Month, Use, Demand, Cost) %>%
+  distinct(AccountNumber)
+
+### replace with zero
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = if_else(is.na(Use) & AccountNumber %in% cost_only$AccountNumber, "zero", Imputed),
+         Use = if_else(AccountNumber %in% cost_only$AccountNumber, 0, Use))
+
+no_use <- no_use %>%
+  filter(!AccountNumber %in% cost_only$AccountNumber)
+```
+
+The number of accounts and instances of each gap between missing values are investigated following the removal of cost-only accounts:
+```{r monthdiff-table}
+no_use %>%
+  filter(!is.na(MonthDiff)) %>%
+  group_by(MonthDiff, AccountNumber) %>%
+  summarize(n_instances = n()) %>%
+  group_by(MonthDiff) %>%
+  summarize(n_accounts = n(),
+            n_instances = sum(n_instances)) %>%
+  arrange(desc(MonthDiff)) %>% 
+  pander()
+```
+
+There are still many accounts and instances showing consecutive months with missing use and reported cost.  The data set was checked for duplicates, but that was revealed not to be the cause.  Remaining accounts and instances missing are investigated by fuel:
+```{r nouse-byfuel}
+no_use %>%
+  group_by(Fuel, AccountNumber) %>%
+  summarize(n_missing = n()) %>%
+  group_by(Fuel) %>%
+  summarize(n_accounts = n(),
+            n_missing = sum(n_missing)) %>%
+  arrange(desc(n_accounts), desc(n_missing)) %>% 
+  pander()
+```
+
+The single missing value for a propane account occurred 7 months after the prior reported value and was followed by a zero 6 months later.  This missing value was filled with zero.
+```{r nouse-propane}
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = if_else(is.na(Use) & !is.na(Cost) & Fuel == "Propane and Liquid Propane",
+                       "zero", Imputed),
+         Use = if_else(is.na(Use) & !is.na(Cost) & Fuel == "Propane and Liquid Propane",
+                       0, Use))
+```
+
+Electricity values were next inspected graphically:
+```{r nouse-elec}
+no_use_elec <- no_use %>%
+  filter(Fuel == "Electricity, grid purchase") %>%
+  select(AccountNumber, Month) %>%
+  unique()
+
 eo88_imp %>%
-  select(Use, Demand, Cost) %>% 
-  VIM::aggr(numbers = TRUE, prop = FALSE, bars = FALSE, cex.numbers = 0.9)
+  filter(AccountNumber %in% no_use_elec$AccountNumber,
+         !is.na(Cost)) %>%
+  select(AccountNumber, Share, Month, Use, Cost) %>%
+  mutate(Use = Use * Share, Cost = Cost * Share) %>%
+  group_by(AccountNumber, Month) %>%
+  summarize(Use = sum(Use), Cost = sum(Cost)) %>%
+  gather(Measure, Value, -(AccountNumber:Month)) %>%
+  ggplot() +
+  geom_line(aes(x = Month, y = Value, col = Measure)) +
+  geom_point(aes(x = Month, y = Value, col = Measure)) +
+  geom_point(data = no_use_elec, aes(x = Month, y = 1)) +
+  facet_wrap(~ AccountNumber, scales = "free") +
+  scale_y_continuous(trans = "log10") +
+  theme(legend.position = c(0.85, 0.25)) +
+  labs(title = "Reported use and cost for electricity grid purchase accounts",
+       subtitle = "For accounts with at least one month missing reported use",
+       caption = "Missing use values represented by black dots")
+```
+
+Three of the five accounts show missing values either surrounded by zeroes or in the last months of their reporting.  These accounts were assumed to be zero, possibly representing cancelled accounts with remaining charges.  The remaining two accounts were identified for more detailed imputation -- given the clear relationship between cost and use, linear regression was selected as the imputation method for these values.
+```{r nouse-elec-flag}
+no_use_elec <- no_use_elec %>%
+  filter(!AccountNumber %in% c("Electric-00580-69006", "Electric-40-NORRWF-0126-E-001--INTEGRYS-N01000005531926"))
+
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = ifelse(is.na(Use) & !is.na(Cost) & AccountNumber %in% no_use_elec$AccountNumber,
+                         "zero", Imputed),
+         Use = ifelse(is.na(Use) & !is.na(Cost) & AccountNumber %in% no_use_elec$AccountNumber,
+                          0, Use),
+         Imputed = ifelse(is.na(Use) & !is.na(Cost) & Fuel == "Electricity, grid purchase",
+                          "reg", Imputed))
+```
+
+Fuel oil was investigated next.  All accounts were shown to either be missing a single value or have missing values at most one month apart.  Accounts were again investigated graphically:
+```{r nouse-fuel}
+no_use_fuel <- no_use %>%
+  filter(Fuel == "Fuel Oil #2")
+
+eo88_imp %>%
+  filter(AccountNumber %in% no_use_fuel$AccountNumber, !is.na(Cost)) %>%
+  select(AccountNumber, Share, Month, Use, Cost) %>%
+  mutate(Use = Use * Share, Cost = Cost * Share) %>%
+  group_by(AccountNumber, Month) %>%
+  summarize(Use = sum(Use), Cost = sum(Cost)) %>%
+  gather(Measure, Value, -(AccountNumber:Month)) %>%
+  ggplot() +
+  geom_line(aes(x = Month, y = Value + 1, col = Measure)) +
+  geom_point(aes(x = Month, y = Value + 1, col = Measure)) +
+  geom_point(data = no_use_fuel, aes(x = Month, y = 1)) +
+  facet_wrap(~ AccountNumber, scales = "free") +
+  scale_y_continuous("Value", trans = "log10") +
+  theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
+  labs(title = "Reported use and cost for fuel oil #2 accounts",
+       subtitle = "For accounts with at least one month missing reported use",
+       caption = "Missing use values represented by black dots")
+```
+
+The first two accounts have missing values that appear to correspond to zero based on other points in the plots; these were filled with zero.  The remaining four accounts were flagged for imputation with regression.
+```{r nouse-fuel-flag}
+no_use_fuel <- no_use_fuel %>%
+  filter(AccountNumber %in% c("FuelOil#2-26-PURCHASE-HIST-OIL2-001", "FuelOil#2-7502000"))
+
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = ifelse(is.na(Use) & !is.na(Cost) & AccountNumber %in% no_use_fuel$AccountNumber,
+                          "zero", Imputed),
+         Use = ifelse(is.na(Use) & !is.na(Cost) & AccountNumber %in% no_use_fuel$AccountNumber,
+                      0, Use),
+         Imputed = ifelse(is.na(Use) & !is.na(Cost) & Fuel == "Fuel Oil #2",
+                          "reg", Imputed))
+```
+
+The large number of natural gas accounts were prioritized based on the time between missing values -- these values ranged from 0 to 33 months.  Accounts with time difference between missing values over 4 months were investigated first:
+```{r nouse-gas}
+no_use_gas <- no_use %>%
+  filter(Fuel == "Natural Gas")
+
+gas_durations <- no_use_gas %>%
+  group_by(AccountNumber) %>%
+  summarize(n_missing = n(),
+            shortest = min(MonthDiff, na.rm = TRUE),
+            longest = max(MonthDiff, na.rm = TRUE)) %>%
+  arrange(desc(longest), desc(n_missing))
+
+gas_investigate <- gas_durations %>%
+  filter(longest > 4) %>%
+  pull(AccountNumber)
+
+eo88_imp %>%
+  filter(AccountNumber %in% gas_investigate, !is.na(Cost)) %>%
+  select(AccountNumber, Share, Month, Use, Cost) %>%
+  mutate(Use = Use * Share, Cost = Cost * Share) %>%
+  group_by(AccountNumber, Month) %>%
+  summarize(Use = sum(Use), Cost = sum(Cost)) %>%
+  gather(Measure, Value, -(AccountNumber:Month)) %>%
+  ggplot() +
+  geom_line(aes(x = Month, y = Value + 1, col = Measure)) +
+  geom_point(aes(x = Month, y = Value + 1, col = Measure)) +
+  geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1)) +
+  facet_wrap(~ AccountNumber, scales = "free") +
+  scale_y_continuous("Value", trans = "log10") +
+  theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
+  labs(title = "Reported use and cost for natural gas accounts",
+       subtitle = "For accounts with at least four months between missing reported use",
+       caption = "Missing use values represented by black dots")
+```
+
+Some of these accounts appear to represent "minimum bill" accounts -- accounts that have a minimum cost even with zero use.  Programmatic identification of these accounts was attempted but was unsuccessful; graphical investigation of the 72 natural gas accounts was instead performed.  20 of the accounts were found to be likely minimum bill accounts or have missing values before or after any reported values -- these were filled with zero.  Missing values from the remaining 52 accounts were flagged for imputation with linear regression.
+
+```{r nouse-gas-flag}
+## likely min bill or zero before/after meter reported -- zero
+no_use_gas <- no_use_gas %>%
+  filter(AccountNumber %in% c("Gas-0105156190", "Gas-2293459050", "Gas-398008033200000", "Gas-498010055100000",
+                              "Gas-498010055200008", "Gas-03-BUFFALO-NC-NGAS-001--3758-874-05 & 873-07-SUPPLY",
+                              "Gas-11-MAINCAMPUS-NG-001", "Gas-398010056700007", "Gas-55912-84451",
+                              "Gas-6428680108", "Gas-65-SUPLZA-0005-NG-001--648337/648410",
+                              "Gas-0892516570", "Gas-18-MAINCAMPUS-NG-001--T002306-FREDONIA",
+                              "Gas-0672015270","Gas-0755040850", "Gas-0894540071", "Gas-0894540181",
+                              "Gas-1274013891", "Gas-498011054700006", "Gas-498021020000001"))
+
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = ifelse(is.na(Use) & !is.na(Cost) & AccountNumber %in% no_use_gas$AccountNumber,
+                          "zero", Imputed),
+         Use = ifelse(is.na(Use) & !is.na(Cost) & AccountNumber %in% no_use_gas$AccountNumber,
+                      0, Use),
+         Imputed = ifelse(is.na(Use) & !is.na(Cost) & Fuel == "Natural Gas",
+                          "reg", Imputed))
 ```
 
 
-### Reported Cost; No Demand
-
 ### Data Imputation
+All remaining missing values have been flagged for imputation with random forest (25 values) or linear regression (672 values) models.  Each imputation method is implemented separately using the `mice` package.  The `AccountNumber` field is converted to a factor and included in the impuation predictor matrix -- this leads to the creation of an individual fit for each account.
 
-#### Random Forest
+```{r rf-prep}
+# find those needing rf
+rf_accts <- eo88_imp %>%
+  filter(Imputed == "rf") %>%
+  pull(AccountNumber) %>%
+  unique()
 
-#### Regression
+rf_data <- eo88_imp %>%
+  filter(AccountNumber %in% rf_accts) %>%
+  left_join(bldg_meta, by = "ESPLocationID") %>%
+  left_join(regions, by = "ClimateRegion") %>%
+  left_join(weather, by = c("Division", "Month")) %>%
+  left_join(bldg_sfy %>% select(ESPLocationID, SFY, FloorArea, Type1),
+            by = c("ESPLocationID", "SFY")) %>%
+  # convert month to month number & year
+  mutate(Year = year(Month), Month = month(Month)) %>%
+  select(AccountNumber, Month, Year, Share, YearBuilt, FloorArea,
+         Type = Type1, PCP:TMAX, Use)
 
-#### Results
+# YearBuilt & Type don't change; FloorArea does
+rf_data <- rf_data %>%
+  select(-YearBuilt, -Type)
+```
+
+For accounts containing values missing use, demand, and cost, reported data was joined with the National Climatic Data Center weather data, as well as variable building data fields.  When attempting random forest imputation, an error was returned related to computational singularity of the predictor matrix.  The correlation of the matrix revealed that the minimum temperature `TMIN` and maximum temperature `TMAX` were the most highly correlated variables; imputation was successful after removal of `TMAX`.
+
+```{r rf-imp}
+# for imputation, solve doesn't work due to highly correlated vars -- drop TMAX
+# convert accountnumber to factor to fill by account
+rf_data <- rf_data %>%
+  arrange(AccountNumber, Year, Month) %>%
+  mutate(AccountNumber = factor(AccountNumber)) %>%
+  select(-TMAX)
+
+# initate mice & extract predictors & methods
+rf_init <- mice(rf_data, maxit = 0, seed = 100)
+rf_meth <- rf_init$method
+rf_pred <- rf_init$predictorMatrix
+
+# set method to random forest for use
+rf_meth["Use"] <- "rf"
+
+# don't use share to impute
+rf_pred["Share", "Use"] <- 0
+
+#impute & retrieve
+rf_imp <- mice(rf_data, method = rf_meth, predictorMatrix = rf_pred, print = FALSE, seed = 100)
+
+rf_imp <- complete(rf_imp) %>%
+  arrange(AccountNumber, Year, Month) %>%
+  select(-(FloorArea:TMIN))
+```
+
+For accounts containing values missing use with reported cost, data was processed by the `mice` package to perform Bayesian linear regression.  The variable `Share` created during the mapping of reported values to calendar months was removed from the predictor matrix prior to imputation.
+
+```{r reg-imp}
+# find those needing regression
+reg_accts <- eo88_imp %>%
+  filter(Imputed == "reg") %>%
+  pull(AccountNumber) %>%
+  unique()
+
+reg_data <- eo88_imp %>%
+  filter(AccountNumber %in% reg_accts) %>%
+  # convert month to month number & year
+  mutate(Year = year(Month), Month = month(Month)) %>%
+  select(AccountNumber, Month, Year, Share, Use, Cost) %>%
+  arrange(AccountNumber, Year, Month, Share) %>%
+  # convert accountnumber to factor to fill by account
+  mutate(AccountNumber = factor(AccountNumber))
+
+# initate mice & extract predictors & methods
+reg_init <- mice(reg_data, maxit = 0, seed = 100)
+reg_meth <- reg_init$method
+reg_pred <- reg_init$predictorMatrix
+
+# set method to regression for use; don't impute cost
+reg_meth["Use"] <- "norm"
+reg_meth["Cost"] <- ""
+
+# don't use share to impute use; remove cost from matrix
+reg_pred["Use", "Share"] <- 0
+reg_pred["Cost", ] <- 0
+
+#impute & retrieve
+reg_imp <- mice(reg_data, method = reg_meth, predictorMatrix = reg_pred, print = FALSE, seed = 100)
+
+reg_imp <- complete(reg_imp) %>%
+  arrange(AccountNumber, Year, Month, Share)
+```
+
+With imputation complete, inspection of samples of imputed values were inspected to confirm validity
+```{r gather-imp}
+rf_imp <- rf_data %>%
+  left_join(rf_imp, by = c("AccountNumber", "Month", "Year", "Share"),
+            suffix = c("_missing", "_imputed")) %>%
+  filter(is.na(Use_missing)) %>%
+  mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
+  distinct(AccountNumber, Month, Year, Share, Cost, .keep_all = TRUE) %>%
+  select(AccountNumber, Month, Share, Use = Use_imputed)
+
+reg_imp <- reg_data %>%
+  left_join(reg_imp, by = c("AccountNumber", "Month", "Year", "Share", "Cost"),
+            suffix = c("_missing", "_imputed")) %>%
+  filter(is.na(Use_missing), !is.na(Cost)) %>%
+  mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
+  distinct(AccountNumber, Month, Year, Share, Cost, .keep_all = TRUE) %>%
+  select(AccountNumber, Month, Share, Use = Use_imputed, Cost)
+```
+
+```{r imp-plot}
+rf_plot <- rf_data %>%
+  filter(AccountNumber %in% rf_accts[1:4]) %>% 
+  mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
+  ggplot(aes(x = Month, y = Use, col = "Reported")) +
+  geom_point() +
+  geom_line() +
+  geom_point(data = filter(rf_imp, AccountNumber %in% rf_accts[1:4]),
+             aes(x = Month, y = Use, col = "Imputed")) +
+  facet_wrap(~ AccountNumber, scales = "free") +
+  labs(title = "Sample of values imputed with random forest", col = NULL) +
+  scale_color_manual(values = c("Reported" = "black", "Imputed" = "red"))
+
+reg_plot <- reg_data %>%
+  mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
+  filter(AccountNumber %in% reg_accts[c(1, 4, 5, 10)]) %>%
+  ggplot(aes(x = Month)) +
+  geom_point(aes(y = Use + 1, col = "Use")) +
+  geom_line(aes(y = Use + 1, col = "Use")) +
+  geom_point(aes(y = Cost + 1, col = "Cost")) +
+  geom_line(aes(y = Cost + 1, col = "Cost")) +
+  geom_point(data = filter(reg_imp, AccountNumber %in% reg_accts[c(1, 4, 5, 10)]),
+             aes(x = Month, y = Use + 1, col = "Imputed")) +
+  scale_y_log10() +
+  facet_wrap(~ AccountNumber, scales = "free") +
+  labs(title = "Sample of values imputed with linear regression", col = NULL)
+
+gridExtra::grid.arrange(rf_plot, reg_plot, ncol = 1)
+```
+
+As both imputation methods appear to have returned reasonable values, these values were used to fill the missing values in the consumption data set.  The total use by calendar month (resulting from multiple bill cylces existing within a month) was calculated by multiplying the use by the share for each month and summing by month for each account number.
+```{r fill-na}
+# pull in imputed values from rf & reg to fill remaining NAs
+eo88_imp <- eo88_imp %>%
+  left_join(rf_imp, by = c("AccountNumber", "Month", "Share"),
+            suffix = c("", "_rf")) %>%
+  mutate(Use = if_else(Imputed == "rf", Use_rf, Use)) %>%
+  left_join(reg_imp, by = c("AccountNumber", "Month", "Share", "Cost"),
+            suffix = c("", "_reg")) %>%
+  mutate(Use = if_else(Imputed == "reg", Use_reg, Use)) %>%
+  select(-Use_rf, -Use_reg)
+
+# aggregate totals by calendar month across different billing cycles
+eo88_final <- eo88_imp %>%
+  mutate(Use = Use * Share,
+         Cost = Cost * Share) %>%
+  select(-Share) %>%
+  group_by(ESPLocationID, Utility, AccountNumber, Fuel, Units, Month, SFY) %>%
+  summarize(Demand = max(Demand, na.rm = TRUE),
+            Use = sum(Use, na.rm = TRUE),
+            Cost = sum(Cost, na.rm = TRUE)) %>%
+  ungroup()
+```
 
 
-## Export to Database
+## Data Management
+Data was written to a Microsoft SQL Server database to allow for analysis in the database or in other environments outside of R.  These include the following:
+
+  - Building data
+    - Fixed metadata (`building_metadata`)
+    - Variable data (`building_filingdata`)
+  - Weather data
+    - Climate region lookup (`noaa_regions`)
+    - Monthly weather data (`weather_monthly`)
+  - Consumption data
+    - Data as reported, mapped to calendar months (`consumption_filingdata_asis`)
+    - Data as reported, summed by calendar month (`consumption_filingdata_asis_summed`)
+    - Imputed data (`consumption_filingdata_imputed`)
+    - Imputed data, summed by calendar month (`consumption_filingdata_imputed_summed`)
+    - The same table, as used for reporting (`consumption_filingdata_final`)
+    
+```{r write-db, eval=FALSE}
+library(odbc)
+library(DBI)
+
+# connect to db
+con <- dbConnect(odbc(), Driver = "SQL Server", Server = getOption("ms_sql_server"), Database = "NYEMEO88")
+
+# write relevant tables to db
+dbWriteTable(con, dbId(con, "building_metadata", "EO88"), bldg_meta, row.names = FALSE)
+dbWriteTable(con, dbId(con, "building_filingdata", "EO88"), bldg_sfy, row.names = FALSE)
+dbWriteTable(con, dbId(con, "noaa_regions", "EO88"), regions, row.names = FALSE)
+dbWriteTable(con, dbId(con, "weather_monthly", "EO88"), weather, row.names = FALSE)
+dbWriteTable(con, dbId(con, "consumption_filingdata_asis", "EO88"), eo88, row.names = FALSE)
+dbWriteTable(con, dbId(con, "consumption_filingdata_asis_summed", "EO88"), select(eo88_summed, -Demand), row.names = FALSE)
+dbWriteTable(con, dbId(con, "consumption_filingdata_imputed", "EO88"), eo88_imp, row.names = FALSE)
+dbWriteTable(con, dbId(con, "consumption_filingdata_imputed_summed", "EO88"), select(eo88_final, -Demand), row.names = FALSE)
+dbWriteTable(con, dbId(con, "consumption_filingdata_final", "EO88"), select(eo88_final, -Demand, -Cost), row.names = FALSE)
+
+# disconnect from db
+dbDisconnect(con)
+```
+
 
 
 ## Performance Analysis
@@ -652,3 +1040,5 @@ BuildSmart NY (2016).  EO88 2016 Annual Report. https://www.nypa.gov/-/media/nyp
 Edgar Ruiz (2017). dbplot: Simplifies Plotting Data Inside Databases. R package version 0.1.1. https://CRAN.R-project.org/package=dbplot
 
 Max Kuhn (2017). caret: Classification and Regression Training. R package version 6.0-78. https://CRAN.R-project.org/package=caret
+
+Taiyun Wei and Viliam Simko (2017). R package "corrplot": Visualization of a Correlation Matrix (Version 0.84). Available from https://github.com/taiyun/corrplot
