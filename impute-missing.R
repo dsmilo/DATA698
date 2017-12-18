@@ -5,7 +5,8 @@ library(tidyverse)
 eo88_imp <- eo88 %>% mutate(Imputed = character(nrow(eo88)))
 
 # investigate distribution of Use values by SFY
-ggplot(eo88_imp, aes(x = SFY, y = Use)) + geom_boxplot()
+ggplot(eo88_imp, aes(x = SFY, y = Use)) + geom_boxplot() +
+  ggtitle("Distribution of reported usage values by SFY")
 
 # investigate two extreme values (1.6e+9 & 1.6e-9)
 extremes <- eo88_imp %>%
@@ -16,7 +17,10 @@ eo88_imp %>%
   filter(ESPLocationID %in% extremes$ESPLocationID, Fuel %in% extremes$Fuel) %>%
   ggplot(aes(x = Month, y = Use)) +
   geom_line() +
-  facet_wrap(ESPLocationID ~ AccountNumber, scales = "free_y")
+  facet_wrap(ESPLocationID ~ AccountNumber, scales = "free_y") +
+  labs(title = "Usage for facilities with maximum & minimum reported monthly usage",
+       subtitle = "Usage shown by ESPLocationID & account number",
+       caption = "All accounts for fuel containing max & min values shown")
 
 # same account: ESP 324; Electricity, grid purchase; Electric-291010012800006
 # sum two extreme values & split across two months (2011-01-01 & 2011-02-01)
@@ -32,12 +36,12 @@ eo88_imp <- eo88_imp %>%
 # investigate missing values by reported measure
 library(mice)
 library(pander)
-md.pattern(eo88_imp) %>% pander()
+md.pattern(eo88_imp) %>% t() %>% pander()
 
 # viz missing
-VIM::aggr(eo88_imp)
-VIM::aggr(eo88_imp %>% select(Use, Demand, Cost), numbers = TRUE, prop = FALSE, bars = FALSE)
-
+eo88_imp %>%
+  select(Use, Demand, Cost) %>%
+  VIM::aggr(numbers = TRUE, prop = FALSE, bars = FALSE, cex.numbers = 0.9)
 
 # missing use; reported demand & cost ##########################################
 eo88_imp %>%
@@ -71,7 +75,10 @@ eo88_imp %>%
             notall = n() - allna, sharena = allna / n()) %>%
   ggplot(aes(x = sharena)) +
   geom_histogram(binwidth = 0.1, alpha = 0.5, col = "black") +
-  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = scales::percent)
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = scales::percent) +
+  labs(title = "Distribution of share of months with use, demand, and cost missing",
+       subtitle = "For all accounts with at least one month missing all three values",
+       x = "Share of months", y = "Count")
 
 eo88_imp %>%
   filter(AccountNumber %in% trip_na$AccountNumber) %>%
@@ -82,7 +89,7 @@ eo88_imp %>%
   arrange(desc(sharena)) %>%
   top_n(10, sharena)
 
-### those with 100% all na same facility (410); same facility above with backfilled
+### those with 100% all na same facility (410);
 ### both 2011-04-01 - 2012-04-01
 ### facility is excluded for SFY 2011-12 & 2012-13
 ### JOIN TO CHECK STATUS & number missing
@@ -108,13 +115,17 @@ eo88_imp %>%
   filter(AccountNumber %in% trip_na$AccountNumber, Fuel == "Electricity, grid purchase") %>%
   select(AccountNumber, Month, Use, Demand, Cost) %>%
   group_by(AccountNumber) %>%
-  mutate(na = is.na(Use) & is.na(Demand) & is.na(Use),
-         Use = ifelse(na, 0, Use)) %>%
-  ggplot(aes(Month, Use, col = na)) +
+  mutate(Missing = is.na(Use) & is.na(Demand) & is.na(Use),
+         Use = ifelse(Missing, 0, Use)) %>%
+  ggplot(aes(Month, Use, col = Missing)) +
   geom_line() +
   geom_point() +
   facet_wrap(~ AccountNumber, scales = "free") +
-  theme(legend.position = "bottom")
+  scale_y_continuous(NULL, NULL, NULL) +
+  theme(panel.grid = element_blank(), legend.position = c(0.65, 0.05), legend.direction = "horizontal") +
+  labs(title = "Reported eletricity grid purchase usage",
+       subtitle = "For accounts with months missing use, demand, and cost",
+       x = NULL)
 
 ### many before or after reporting --- likely cancelled accts -- get six not
 elec_trip <- c("Electric-1001-226-0906", "Electric-1001-6581-323", "Electric-41861-58005",
@@ -166,7 +177,7 @@ eo88_imp <- eo88_imp %>%
 # cost but no use or demand ####################################################
 eo88_imp %>%
   select(Use, Demand, Cost) %>%
-  VIM::aggr(numbers = TRUE, prop = FALSE, bars = FALSE)
+  VIM::aggr(numbers = TRUE, prop = FALSE, bars = FALSE, cex.numbers = 0.9)
 
 ### lot of natural gas & electricity grid purchase
 eo88_imp %>%

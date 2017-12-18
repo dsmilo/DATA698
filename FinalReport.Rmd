@@ -479,8 +479,8 @@ The left segment of this plot shows that there are roughly 10,000 cases missing 
 For the purposes of Executive Order 88 analysis and reporting, demand and cost are of no immediate import; only use is of concern, as it is used to calculate source EUI.  There are only three patterns of missingness which involve missing use:
 
   - Missing use; reported demand; reported cost (7 instances)
-  - Missing use; missing demand; missing cost (740 instances)
-  - Missing use; missing demand; reported cost (9207 instances)
+  - Missing use; missing demand; missing cost (618 instances)
+  - Missing use; missing demand; reported cost (9302 instances)
 
 Each of these patterns is investigated individually, as the approach to imputing the missing values will likely vary.
 
@@ -494,6 +494,97 @@ eo88_imp <- eo88_imp %>%
 
 
 ### No Demand or Cost
+For accounts containing entries missing each of cost, demand, and cost, the share of months containing all missing values was calculated, and the distribution of accounts by share investigated:
+```{r trip-na-share}
+trip_na <- eo88_imp %>%
+  filter(is.na(Use), is.na(Demand), is.na(Cost)) %>%
+  select(AccountNumber, Month) %>%
+  distinct()
+
+eo88_imp %>%
+  filter(AccountNumber %in% trip_na$AccountNumber) %>%
+  group_by(AccountNumber) %>%
+  summarize(allna = sum(is.na(Use) & is.na(Demand) & is.na(Cost)),
+            notall = n() - allna, sharena = allna / n()) %>%
+  ggplot(aes(x = sharena)) +
+  geom_histogram(binwidth = 0.1, alpha = 0.5, col = "black") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = scales::percent) +
+  labs(title = "Distribution of share of months with use, demand, and cost missing",
+       subtitle = "For all accounts with at least one month missing all three values",
+       x = "Share of months", y = "Count")
+```
+
+The two account numbers with 100% all-missing values both belong to the same facility and span only April 2011 through April 2012.  Investigation of the variable building data revealed that the `Status` of this facility in SFY 2011-12 and SFY 2012-13 was *excluded*, meaning that its usage is not reported as part of EO88 compliance.  To investigate if this explained all missing values, the consumption and building data sets were joined and data missingness reexamined.  Over 98% of missing values still remained, so further investigation was continued, and excluded values were considered throughout.
+
+Electricity grid purchases were investigated first by visualizing the accounts containing at least one month missing all three values:
+```{r tripna-elec}
+eo88_imp %>%
+  filter(AccountNumber %in% trip_na$AccountNumber, Fuel == "Electricity, grid purchase") %>%
+  select(AccountNumber, Month, Use, Demand, Cost) %>%
+  group_by(AccountNumber) %>%
+  mutate(Missing = is.na(Use) & is.na(Demand) & is.na(Use),
+         Use = ifelse(Missing, 0, Use)) %>%
+  ggplot(aes(Month, Use, col = Missing)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ AccountNumber, scales = "free") +
+  scale_y_continuous(NULL, NULL, NULL) +
+  theme(panel.grid = element_blank(), legend.position = c(0.65, 0.05), legend.direction = "horizontal") +
+  labs(title = "Reported eletricity grid purchase usage",
+       subtitle = "For accounts with months missing use, demand, and cost",
+       x = NULL)
+```
+
+Many of these accounts appear to have missing values before and/or after data was reported with non-missing values.  Given the back-filling seen in the above section to make reported values line up with State Fiscal Years, it was assumed that these accounts followed the same pattern.  Missing use values for these accounts in months also missing demand and cost were filled with zero and tagged as *zero* imputation.
+
+Six of the accounts do not appear to follow this pattern -- their all-missing values do not fall before or after periods with non-missing values.  These values were flagged for further imputation -- given the lack of other reported values (demand and cost), an approach that incorporated other data was selected.  The weather data that was acquired for the initial approach was identified as data for use in imputation, and random forest imputation was selected as the preferred method due to its low variance and bias.  These values were tagged with *rf* imputation but left as missing until all investigation is complete.
+
+```{r flag-elec-tripna}
+### many before or after reporting --- likely cancelled accts -- get six not
+elec_trip <- c("Electric-1001-226-0906", "Electric-1001-6581-323", "Electric-41861-58005",
+               "Electric-495301090000005", "Electric-695320202500015", "Electric-9564-007-100")
+
+elec_cancelled <- eo88_imp %>%
+  filter(Fuel == "Electricity, grid purchase",
+         AccountNumber %in% trip_na$AccountNumber,
+         !AccountNumber %in% elec_trip) %>%
+  pull(AccountNumber) %>%
+  unique()
+
+
+### fill cancelled with zeroes
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = if_else(AccountNumber %in% elec_cancelled &
+                             is.na(Use) & is.na(Demand) & is.na(Cost),
+                           "zero", Imputed),
+         Use = if_else(AccountNumber %in% elec_cancelled &
+                         is.na(Use) & is.na(Demand) & is.na(Cost),
+                       0, Use))
+
+### flag others for imputation -- assume random forest due to unkown relationship with weather
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = if_else(AccountNumber %in% elec_trip &
+                             is.na(Use) & is.na(Demand) & is.na(Cost),
+                           "rf", Imputed))
+```
+
+A large number of account number for thermal fuels (fuel oil #2, natural gas, kerosene, propane, and steam) contained missing use, cost, and demand.  Inspection of the patterns of these missing values reflected periods of usage followed by no use as well as periodic purchases.  Both of these patterns make intutitive sense for thermal fuels, as they are highly seasonal; further, some fuels are reserve-based -- a consumer purchases a reserve of fuel and uses it in a non-metered fashion.  Based on this, the "triple-missing" values for thermal fuels were imputed with zero.
+```{r tripna-thermal}
+eo88_imp <- eo88_imp %>%
+  mutate(Imputed = if_else(is.na(Use) & is.na(Demand) & is.na(Cost) &
+                         Fuel != "Electricity, grid purchase",
+                       "zero", Imputed),
+         Use = if_else(is.na(Use) & is.na(Demand) & is.na(Cost) &
+                         Fuel != "Electricity, grid purchase",
+                       0, Use))
+```
+
+The only rows in the consumption database missing each of use, demand, and cost are now those flagged for imputation using a random forest model:
+```{r aggr-after-tripna}
+eo88_imp %>%
+  select(Use, Demand, Cost) %>% 
+  VIM::aggr(numbers = TRUE, prop = FALSE, bars = FALSE, cex.numbers = 0.9)
+```
 
 
 ### Reported Cost; No Demand

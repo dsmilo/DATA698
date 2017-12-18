@@ -470,7 +470,9 @@ model_data %>%
   scale_x_continuous(trans = "log10", breaks = 10^(2:8),
                      labels = c(100, "1k", "10k", "100k", "1M", "10M", "100M")) +
   scale_y_continuous("", labels = scales::percent) +
-  theme(panel.grid.minor = element_blank(), legend.position = "top")
+  theme(panel.grid.minor = element_blank(), legend.position = "top") +
+  labs(title = "Distribution of monthly natural gas reported usage",
+       subtitle = "Non-missing values for ESPLocationID 92")
 
 # boxplot of non-missing Use by fuel colored by flagged
 model_data %>%
@@ -480,7 +482,9 @@ model_data %>%
   scale_y_continuous(trans = "log10", breaks = 10^(2:7),
                      labels = c(100, "1k", "10k", "100k", "1M", "10M")) +
   theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank()) +
-  facet_wrap(~ Fuel, scales = "free_y")
+  facet_wrap(~ Fuel, scales = "free_y") +
+  labs(title = "Distribution of reported usage values by fuel",
+       subtitle = "Non-missing values for ESPLocationID 92")
 
 # violin plot of non-missing natural gas Use by SFY & month colored by flagged
 model_data %>%
@@ -541,7 +545,9 @@ model_data %>%
   geom_area() +
   theme(legend.position = "top") +
   scale_y_continuous(labels = scales::percent) +
-  scale_x_date(NULL, date_breaks = "3 months", date_labels = "%Y\n%m")
+  scale_x_date(NULL, date_breaks = "3 months", date_labels = "%Y\n%m") +
+  labs(title = "Monthly share of natural gas usage values flagged for correction",
+       subtitle = "Non-missing values for ESPLocationID 92")
 
 # area plot of natural gas use by SFY & month colored by flagged
 model_data %>%

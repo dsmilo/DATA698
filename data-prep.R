@@ -177,4 +177,4 @@ eo88 <- eo88 %>%
 # see impute-missing.R for successful imputation
 
 # save processed data for replicability
-save(bldg_meta, bldg_sfy, eo88, file = "data/output/data-prep.Rda")
+save(bldg_meta, bldg_sfy, eo88, file = "data/data-prep.Rda")
