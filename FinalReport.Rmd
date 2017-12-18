@@ -990,12 +990,132 @@ dbDisconnect(con)
 
 
 ## Performance Analysis
+The data, populated with imputed values, was used to calculate performance towards the EUI reduction targets of Executive Order 88.  This was initially attempted using the `dbplyr` and `dbplot` package to perform joins, visualizations, and calculations in the SQL Server database.  The transit time for these calculations were long, and the size of the tables used (roughly 170,000 rows for consumption data) made in-memory calculation feasible, so in-database calculations were abandoned.
 
-### In-Database Calculation
+```{r bsny-perf-db, eval=FALSE}
+library(dbplyr)
 
-### In-Memory Calculation
+# connect to db
+con <- dbConnect(odbc(), Driver = "SQL Server", Server = getOption("ms_sql_server"), Database = "NYEMEO88")
 
-#### Visualization
+# connect to relevant tables
+meta <- tbl(con, in_schema("EO88", "building_metadata"))
+sfy  <- tbl(con, in_schema("EO88", "building_filingdata"))
+eofy <- tbl(con, in_schema("EO88", "consumption_filingdata_final"))
+
+# join tables
+full_db <- eofy %>% 
+  left_join(meta) %>% 
+  # MTA has not reported for SFY 2016-17; only one overlapping month
+  filter(Agency != "MTA" | SFY != "2016-17") %>% 
+  group_by(Agency, Name, SFY) %>% 
+  summarize(kBtu = sum(Use)) %>% 
+  left_join(sfy) %>% 
+  filter(Status == "included")
+
+# eui for all agencies
+bsny_state_db <- full_db %>% 
+  group_by(SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  ungroup() %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
+
+# get eui by agency
+bsny_agency_db <- full_db %>% 
+  group_by(Agency, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Agency) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
+
+# get eui by agency, facility, year
+bsny_name_db <- full_db %>% 
+  group_by(Agency, ESPLocationID, Name, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Agency, ESPLocationID, Name) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
+
+# viz from db
+library(dbplot)
+bsny_name %>%
+  dbplot_bar(SFY)
+```
+
+```{r bsny-perf}
+# square footage needs to be brought in after SFY roll-up due to multiple counting
+bsny_data <- eo88_final %>%
+  left_join(bldg_meta) %>% 
+  # MTA has not reported for SFY 2016-17; only one overlapping month
+  filter(Agency != "MTA" | SFY != "2016-17") %>% 
+  group_by(Agency, Name, SFY) %>% 
+  summarize(kBtu = sum(Use)) %>% 
+  left_join(bldg_sfy) %>% 
+  filter(Status == "included")
+
+# facility performance
+bsny_facility <- bsny_data %>% 
+  group_by(Agency, ESPLocationID, Name, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Agency, ESPLocationID, Name) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
+
+# agency performance
+bsny_agency <- bsny_data %>% 
+  group_by(Agency, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Agency) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
+
+# state performance
+bsny_state <- bsny_data %>% 
+  group_by(SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  ungroup() %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
+```
+
+The overall statewide reduction in source EUI is presented in the table below:
+```{r state-eui-table}
+bsny_state %>%
+  mutate(Reduction = paste0(round(Reduction * 100, 2), "%")) %>%
+  pander()
+```
+
+This reduction closely aligns with the (non weather-normalized) reduction previously calculated by NYPA's software vendor.  To validate the overall calculation approach, the `eo88_summed` data set was compared to reports currently available in the NYEM platform based on the non-imputed data -- all values were found to be within 1% of reported total source kBtu and total square footage.
+```{r sanity-check, eval=FALSE}
+eo88_summed %>% 
+  left_join(bldg_meta) %>% 
+  filter(Agency == "DOCCS",
+         SFY %in% c("2010-11", "2016-17")) %>% 
+  group_by(Agency, SubAgency, ESPLocationID, SFY) %>% 
+  summarize(kBtu = sum(Use)) %>% 
+  left_join(bldg_sfy) %>% 
+  filter(Status == "included") %>% 
+  group_by(Agency, SubAgency, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>%
+  group_by(Agency, SubAgency) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1) %>% 
+  View()
+```
+
+The distribution of agencies' reduction in SFY 2016-17 is shown below, excluding one agency showing a 500+% increase, which is excluded from further analyses:
+```{r agency-final-plot}
+bsny_agency %>%
+  filter(SFY == "2016-17", Reduction < 5) %>%
+  ggplot(aes(x = Reduction)) +
+  geom_histogram(binwidth = 0.05, alpha = 0.5, col = "black") +
+  scale_x_continuous(labels = scales::percent) +
+  geom_vline(xintercept = -0.2, lty = 2, lwd = 1, col = "#006ba6") +
+  geom_vline(xintercept = 0, lty = 3, lwd = 0.5) +
+  labs()
+```
+
 
 ### Analysis by Segments
 
@@ -1013,13 +1133,13 @@ Hadley Wickham and Edgar Ruiz (2017). dbplyr: A 'dplyr' Back End for Databases. 
 
 Jim Hester and Hadley Wickham (2017). odbc: Connect to ODBC Compatible Databases (using the DBI Interface). R package version 1.1.1.9000. https://github.com/rstats-db/odbc
 
-R Special Interest Group on Databases (R-SIG-DB), Hadley Wickham and Kirill Müller (2017). DBI: R Database Interface. R package version 0.7. https://CRAN.R-project.org/package=DBI
+R Special Interest Group on Databases (R-SIG-DB), Hadley Wickham and Kirill M?ller (2017). DBI: R Database Interface. R package version 0.7. https://CRAN.R-project.org/package=DBI
 
 Stef van Buuren, Karin Groothuis-Oudshoorn (2011). mice: Multivariate Imputation by Chained Equations in R. Journal of Statistical Software, 45(3), 1-67. http://www.jstatsoft.org/v45/i03/.
 
 Alexander Kowarik, Matthias Templ (2016). Imputation with the R Package VIM. Journal of Statistical Software, 74(7), 1-16. doi:10.18637/jss.v074.i07
 
-Gergely Daróczi and Roman Tsegelskyi (2017). pander: An R 'Pandoc' Writer. R package version 0.6.1. https://CRAN.R-project.org/package=pander
+Gergely Dar?czi and Roman Tsegelskyi (2017). pander: An R 'Pandoc' Writer. R package version 0.6.1. https://CRAN.R-project.org/package=pander
 
 Garrett Grolemund, Hadley Wickham (2011). Dates and Times Made Easy with lubridate. Journal of Statistical Software, 40(3), 1-25. URL http://www.jstatsoft.org/v40/i03/.
 

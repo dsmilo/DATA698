@@ -16,23 +16,36 @@ eofy <- tbl(con, in_schema("EO88", "consumption_filingdata_final"))
 # join tables
 full_db <- eofy %>% 
   left_join(meta) %>% 
+  # MTA has not reported for SFY 2016-17; only one overlapping month
+  filter(Agency != "MTA" | SFY != "2016-17") %>% 
+  group_by(Agency, Name, SFY) %>% 
+  summarize(kBtu = sum(Use)) %>% 
   left_join(sfy) %>% 
   filter(Status == "included")
 
 # eui for all agencies
-bsny_state <- full_db %>% 
+bsny_state_db <- full_db %>% 
   group_by(SFY) %>% 
-  summarize(EUI = sum(Use) / sum(FloorArea))
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  ungroup() %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
 
 # get eui by agency
-bsny_agency <- full_db %>% 
+bsny_agency_db <- full_db %>% 
   group_by(Agency, SFY) %>% 
-  summarize(EUI = sum(Use) / sum(FloorArea))
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Agency) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
 
 # get eui by agency, facility, year
-bsny_name <- full_db %>% 
-  group_by(Agency, Name, SFY) %>% 
-  summarize(EUI = sum(Use) / sum(FloorArea))
+bsny_name_db <- full_db %>% 
+  group_by(Agency, ESPLocationID, Name, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Agency, ESPLocationID, Name) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1)
 
 # viz from db
 library(dbplot)
@@ -42,38 +55,6 @@ bsny_name %>%
 
 # slow; check performance in memory ############################################
 dbDisconnect(con)
-
-bsny_data <- eo88_final %>% 
-  left_join(bldg_meta) %>% 
-  left_join(bldg_sfy) %>% 
-  # MTA has not reported for SFY 2016-17; only one overlapping month
-  filter(Status == "included",
-         Agency != "MTA" | SFY != "2016-17")
-
-bsny_facility <- bsny_data %>% 
-  group_by(Agency, Name, SFY) %>% 
-  summarize(kBtu = sum(Use), sf = sum(FloorArea),
-            EUI = kBtu / sf) %>% 
-  group_by(Agency, Name) %>% 
-  mutate(Reduction = 1 - EUI / first(EUI))
-
-bsny_agency <- bsny_data %>% 
-  filter(Status == "included",
-         Agency != "MTA" | SFY != "2016-17") %>% 
-  group_by(Agency, SFY) %>% 
-  summarize(kBtu = sum(Use), sf = sum(FloorArea),
-            EUI = kBtu / sf) %>% 
-  group_by(Agency) %>% 
-  mutate(Reduction = 1 - EUI / first(EUI))
-
-bsny_state <- bsny_data %>% 
-  # SUNY sf acting weird -- exclude
-  filter(Agency != "SUNY") %>% 
-  group_by(SFY) %>% 
-  summarize(kBtu = sum(Use), sf = sum(FloorArea),
-            EUI = kBtu / sf) %>%
-  mutate(Reduction = 1 - EUI / first(EUI))
-
 
 # square footage needs to be brought in after SFY roll-up due to multiple counting
 bsny_data <- eo88_final %>%
