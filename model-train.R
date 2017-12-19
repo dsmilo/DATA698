@@ -542,7 +542,7 @@ model_data %>%
   gather(Flagged, Share, -(Month)) %>%
   mutate(Flagged = if_else(Flagged == "true", TRUE, FALSE)) %>%
   ggplot(aes(Month, Share, fill = Flagged, col = Flagged)) +
-  geom_area() +
+  geom_area(col = "black") +
   theme(legend.position = "top") +
   scale_y_continuous(labels = scales::percent) +
   scale_x_date(NULL, date_breaks = "3 months", date_labels = "%Y\n%m") +

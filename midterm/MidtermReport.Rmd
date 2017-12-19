@@ -264,7 +264,7 @@ The seven types of measurement units present will be converted to thousand Briti
 
 The progress towards EO88 goals is measured using *source EUI*, which takes into account the total energy needed to make the energy used available (i.e. the amount of raw fuel needed to meet the consumption need).  Therefore, the above formula will have to be modified to handle the conversion from site energy use to source energy use.  This conversion is a fairly straightforward, though the conversion factor varies by fuel; the reference guide created by [Portfolio Manager](https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf) will be used to perform the calculations:
 
-![Portfolio Manager Source-Site Ratios](data/source-eui.PNG)
+![Portfolio Manager Source-Site Ratios](source-eui.PNG)
 
 \newpage
 ## Confidentiality

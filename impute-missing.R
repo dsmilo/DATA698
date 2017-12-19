@@ -119,7 +119,7 @@ eo88_imp %>%
          Use = ifelse(Missing, 0, Use)) %>%
   ggplot(aes(Month, Use, col = Missing)) +
   geom_line() +
-  geom_point() +
+  geom_point(size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous(NULL, NULL, NULL) +
   theme(panel.grid = element_blank(), legend.position = c(0.65, 0.05), legend.direction = "horizontal") +
@@ -284,8 +284,8 @@ eo88_imp %>%
   gather(Measure, Value, -(AccountNumber:Month)) %>%
   ggplot() +
   geom_line(aes(x = Month, y = Value, col = Measure)) +
-  geom_point(aes(x = Month, y = Value, col = Measure)) +
-  geom_point(data = no_use_elec, aes(x = Month, y = 1)) +
+  geom_point(aes(x = Month, y = Value, col = Measure), size = 0.75) +
+  geom_point(data = no_use_elec, aes(x = Month, y = 1), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous(trans = "log10") +
   theme(legend.position = c(0.85, 0.25)) +
@@ -329,8 +329,8 @@ eo88_imp %>%
   gather(Measure, Value, -(AccountNumber:Month)) %>%
   ggplot() +
   geom_line(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(data = no_use_fuel, aes(x = Month, y = 1)) +
+  geom_point(aes(x = Month, y = Value + 1, col = Measure), size = 0.75) +
+  geom_point(data = no_use_fuel, aes(x = Month, y = 1), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous("Value", trans = "log10") +
   theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
@@ -376,8 +376,8 @@ eo88_imp %>%
   gather(Measure, Value, -(AccountNumber:Month)) %>%
   ggplot() +
   geom_line(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1)) +
+  geom_point(aes(x = Month, y = Value + 1, col = Measure), size = 0.75) +
+  geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous("Value", trans = "log10") +
   theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
@@ -413,8 +413,8 @@ for (i in 1:5) {
     gather(Measure, Value, -(AccountNumber:Month)) %>%
     ggplot() +
     geom_line(aes(x = Month, y = Value + 1, col = Measure)) +
-    geom_point(aes(x = Month, y = Value + 1, col = Measure)) +
-    geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1)) +
+    geom_point(aes(x = Month, y = Value + 1, col = Measure), size = 0.75) +
+    geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1), size = 0.75) +
     facet_wrap(~ AccountNumber, scales = "free") +
     scale_y_continuous("Value", trans = "log10") +
     theme(legend.position = "top")
@@ -570,13 +570,13 @@ reg_imp <- reg_data %>%
 
 # plot to check rf
 rf_data %>%
-  filter(AccountNumber %in% rf_accts[1:4]) %>%
+  filter(AccountNumber %in% rf_accts[1:4]) %>% 
   mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
   ggplot(aes(x = Month, y = Use, col = "Reported")) +
-  geom_point() +
+  geom_point(size = 0.75) +
   geom_line() +
   geom_point(data = filter(rf_imp, AccountNumber %in% rf_accts[1:4]),
-             aes(x = Month, y = Use, col = "Imputed")) +
+             aes(x = Month, y = Use, col = "Imputed"), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   labs(title = "Sample of values imputed with random forest", col = NULL) +
   scale_color_manual(values = c("Reported" = "black", "Imputed" = "red"))
@@ -586,12 +586,12 @@ reg_data %>%
   mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
   filter(AccountNumber %in% reg_accts[c(1, 4, 5, 10)]) %>%
   ggplot(aes(x = Month)) +
-  geom_point(aes(y = Use + 1, col = "Use")) +
+  geom_point(aes(y = Use + 1, col = "Use"), size = 0.75) +
   geom_line(aes(y = Use + 1, col = "Use")) +
-  geom_point(aes(y = Cost + 1, col = "Cost")) +
+  geom_point(aes(y = Cost + 1, col = "Cost"), size = 0.75) +
   geom_line(aes(y = Cost + 1, col = "Cost")) +
   geom_point(data = filter(reg_imp, AccountNumber %in% reg_accts[c(1, 4, 5, 10)]),
-             aes(x = Month, y = Use + 1, col = "Imputed")) +
+             aes(x = Month, y = Use + 1, col = "Imputed"), size = 0.75) +
   scale_y_log10() +
   facet_wrap(~ AccountNumber, scales = "free") +
   labs(title = "Sample of values imputed with linear regression", col = NULL)

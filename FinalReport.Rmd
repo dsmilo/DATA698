@@ -1,11 +1,11 @@
 ---
-title: "Executive Order 88 Energy Analytics & Data Cleansing"
+title: "EO88 Energy Analytics & Data Cleansing"
 author: "Dan Smilowitz"
 output: 
   pdf_document: 
     fig_height: 5
     fig_width: 7
-    highlight: pygments
+    fig_caption: false
 fontsize: 12pt
 geometry: margin=1in
 ---
@@ -14,27 +14,17 @@ geometry: margin=1in
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, comment = NA)
 ```
 
-## Abstract
-Some background, challenges, approach, findings -- WRITE LAST
+Historical energy usage and building information is used to analyze performance of New York State agencies towards an Executive Order requiring an improvement in energy efficiency.  Missing values are analyzed and imputed to increase accuracy of reported results.  Values are found to closely match previous results, allowing the New York Power Authority to proceed with in-house calculation of performance using the framework established through this effort.
+
 
 ## Problem Description
 
 ### Background
 On December 28, 2012, New York Governor Andrew Cuomo issued [Executive Order 88](http://www.governor.ny.gov/news/no-88-directing-state-agencies-and-authorities-improve-energy-efficiency-state-buildings) requiring that
 
-  > By April 1, 2020, all Affected State Entities shall collectively reduce the average EUI [Energy Use Intensity] in State-owned and managed buildings by at least 20% from a baseline of the average EUI ... for State fiscal year 2010/2011
+  > By April 1, 2020 ... State Entities shall collectively reduce the average EUI [Energy Use Intensity] ... by at least 20% from a baseline of the average EUI ... for State fiscal year 2010/2011
 
-The [New York Power Authority](https://www.nypa.gov) was charged with establishing a central management and implementation team to administer the executive order, directed and authorized to (among other responsibilities):
-
-  - Take all appropriate measures to ensure that the order's target is met
-  - Direct Affected State Entities to comply with the requirements of this order
-  - Provide strategic, technical, and other assistance to each entity to support implementation
-  - Develop annual milestones for achieving the target
-  - Develop and implement reporting requirements to document each entity's progress toward the target
-  - Develop a comprehensive operations and maintenance plan for the State's building portfolio to help achieve no cost and low cost efficiency improvements and ensure that efficiency savings are sustained
-
-The Executive Order (EO88) led to the creation of NYPA's [BuildSmart NY](https://www.nypa.gov/innovation/programs/buildsmart-ny) program.  BuildSmart NY is a key part of Governor Cuomo's [Reforming the Energy vision](https://rev.ny.gov/) energy strategy and is the premier energy efficiency program referenced in the [2015 New York State Energy Plan](https://energyplan.ny.gov/Plans/2015.aspx).
-
+The [New York Power Authority](https://www.nypa.gov) (NYPA) was charged with establishing a management and implementation team to administer the executive order, directed to ensure agencies' compliance by implementing reporting requirements to document progress toward the target.  In order to track performance against baselines, NYPA's [BuildSmart NY](https://www.nypa.gov/innovation/programs/buildsmart-ny) team collects utility bill information for all fuels (e.g. electricity, natural gas, and water) for all covered facilities as compared to the square footage of each facility.  This information is reported by each agency and submitted to NYPA in the form of an Excel spreadsheet template.
 
 ### Challenges
 Agencies are responsible for performing their own data validation --- the performance of this task has proved incomplete.  Many facilities have missing data for the baseline year, as well as showing large spikes or dips in reported usage believed to be due to data entry errors.  NYPA must ensure accurate data is used for the establishment of baselines and the tracking and reporting of performance.
@@ -112,7 +102,7 @@ bldg_meta <- bldg_meta %>%
 
 This fixed building metadata table is now far more compact, containing only 12 variables.
 
-
+\newpage
 #### Variable Building Data
 Building data varying across fiscal years required additional cleanup, as the names of fields are lengthy and not all variables are stored as the correct data type due to earlier transformations.  The following transformations were performed:
 
@@ -302,6 +292,8 @@ load("data/data-prep.Rda")
 
 Following this conversion to calendar dates, the building and consumption data are sufficiently prepared for analysis.
 
+
+\newpage
 ## Data Cleansing: Initial Approach
 As identified in the *Problem Description* section above, a major issue encountered in analyzing and reporting EO88 performance is the presence of missing data, as well as possible abberant reported data.  In order to identify reported values in need of correction, a function is created to flag data points that met any of three criteria:
 
@@ -410,7 +402,7 @@ model_data %>%
   gather(Flagged, Share, -(Month)) %>%
   mutate(Flagged = if_else(Flagged == "true", TRUE, FALSE)) %>%
   ggplot(aes(Month, Share, fill = Flagged, col = Flagged)) +
-  geom_area() +
+  geom_area(col = "black") +
   theme(legend.position = "top") +
   scale_y_continuous(labels = scales::percent) +
   scale_x_date(NULL, date_breaks = "3 months", date_labels = "%Y\n%m") +
@@ -422,7 +414,7 @@ This plot shows clear seasonality, with far more values flagged for correction i
 
 These patterns, as well as the poor accuracy of attempted data correction, were brought to the BuildSmart NY and NYEM teams to help identify a solution to improve accuracy and reduce any bias.  The NYEM team, after conversation with the vendor that provided the data extract, revealed that **all provided values has already been verified by the reporting agencies.**  This information changed the direction of the approach: data no longer needed to be flagged for imputation; only missing values needed to be filled.
 
-
+\newpage
 ## Data Cleansing: Revised Approach
 The redefined scope of this project called for a focus on only missing values.  Prior to investigating these missing values, the overall distribution of reported usage values was investigated:
 ```{r overall-boxplot}
@@ -461,13 +453,14 @@ eo88_imp <- eo88_imp %>%
 ```
 
 To understand missing values and how they may be imputed, the frequency and patterns of missingness were investigated using the `mice` package (note that the `Imputed` variable was created as an empty character string to avoid obfuscating missingness patterns):
+\newpage
 ```{r aggr-allvars}
 library(mice)
 library(pander)
 md.pattern(eo88_imp) %>% t() %>% pander()
 ```
 
-It is clear that only three reported variables contain missing values -- `Use`, `Demand`, and `Cost`.  The patterns in missing data between these variables were visualized using the `VIM` package:
+The table shows that only three reported variables contain missing values -- `Use`, `Demand`, and `Cost`.  The patterns in missing data between these variables were visualized using the `VIM` package: \newpage
 ```{r aggr}
 eo88_imp %>%
   select(Use, Demand, Cost) %>% 
@@ -482,7 +475,7 @@ For the purposes of Executive Order 88 analysis and reporting, demand and cost a
   - Missing use; missing demand; missing cost (618 instances)
   - Missing use; missing demand; reported cost (9302 instances)
 
-Each of these patterns was investigated individually, as the approach to imputing the missing values was expcted to vary.
+Each of these patterns was investigated individually, as the approach to imputing the missing values was expected to vary.
 
 ### Reported Demand & Cost
 The instances of missing reported use with reported demand and cost all occur for the same account (*Electric-495520212030000*) in consecutive months (April-October 2012); the demand and cost values for each of these months is zero.  Investigation with NYPA staff reveals that this account did not exist prior to November 2012 -- it is likely that the reported zero demand and cost were back-filled to populate the State Fiscal Year with data.  These use values are imputed with zero and flagged with an `Imputed` tag of *zero*.
@@ -517,6 +510,7 @@ eo88_imp %>%
 The two account numbers with 100% all-missing values both belong to the same facility and span only April 2011 through April 2012.  Investigation of the variable building data revealed that the `Status` of this facility in SFY 2011-12 and SFY 2012-13 was *excluded*, meaning that its usage is not reported as part of EO88 compliance.  To investigate if this explained all missing values, the consumption and building data sets were joined and data missingness reexamined.  Over 98% of missing values still remained, so further investigation was continued, and excluded values were considered throughout.
 
 Electricity grid purchases were investigated first by visualizing the accounts containing at least one month missing all three values:
+
 ```{r tripna-elec}
 eo88_imp %>%
   filter(AccountNumber %in% trip_na$AccountNumber, Fuel == "Electricity, grid purchase") %>%
@@ -526,7 +520,7 @@ eo88_imp %>%
          Use = ifelse(Missing, 0, Use)) %>%
   ggplot(aes(Month, Use, col = Missing)) +
   geom_line() +
-  geom_point() +
+  geom_point(size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous(NULL, NULL, NULL) +
   theme(panel.grid = element_blank(), legend.position = c(0.65, 0.05), legend.direction = "horizontal") +
@@ -568,7 +562,7 @@ eo88_imp <- eo88_imp %>%
                            "rf", Imputed))
 ```
 
-A large number of account number for thermal fuels (fuel oil #2, natural gas, kerosene, propane, and steam) contained missing use, cost, and demand.  Inspection of the patterns of these missing values reflected periods of usage followed by no use as well as periodic purchases.  Both of these patterns make intutitive sense for thermal fuels, as they are highly seasonal; further, some fuels are reserve-based -- a consumer purchases a reserve of fuel and uses it in a non-metered fashion.  Based on this, the "triple-missing" values for thermal fuels were imputed with zero.
+A large number of account number for thermal fuels (fuel oil #2, natural gas, kerosene, propane, and steam) contained missing use, cost, and demand.  Inspection of the patterns of these missing values reflected periods of usage followed by no use as well as periodic purchases.  Both of these patterns make intuitive sense for thermal fuels, as they are highly seasonal; further, some fuels are reserve-based -- a consumer purchases a reserve of fuel and uses it in a non-metered fashion.  Based on this, the "triple-missing" values for thermal fuels were imputed with zero.
 ```{r tripna-thermal}
 eo88_imp <- eo88_imp %>%
   mutate(Imputed = if_else(is.na(Use) & is.na(Demand) & is.na(Cost) &
@@ -645,6 +639,7 @@ eo88_imp <- eo88_imp %>%
 ```
 
 Electricity values were next inspected graphically:
+
 ```{r nouse-elec}
 no_use_elec <- no_use %>%
   filter(Fuel == "Electricity, grid purchase") %>%
@@ -661,8 +656,8 @@ eo88_imp %>%
   gather(Measure, Value, -(AccountNumber:Month)) %>%
   ggplot() +
   geom_line(aes(x = Month, y = Value, col = Measure)) +
-  geom_point(aes(x = Month, y = Value, col = Measure)) +
-  geom_point(data = no_use_elec, aes(x = Month, y = 1)) +
+  geom_point(aes(x = Month, y = Value, col = Measure), size = 0.75) +
+  geom_point(data = no_use_elec, aes(x = Month, y = 1), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous(trans = "log10") +
   theme(legend.position = c(0.85, 0.25)) +
@@ -699,8 +694,8 @@ eo88_imp %>%
   gather(Measure, Value, -(AccountNumber:Month)) %>%
   ggplot() +
   geom_line(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(data = no_use_fuel, aes(x = Month, y = 1)) +
+  geom_point(aes(x = Month, y = Value + 1, col = Measure), size = 0.75) +
+  geom_point(data = no_use_fuel, aes(x = Month, y = 1), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous("Value", trans = "log10") +
   theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
@@ -748,8 +743,8 @@ eo88_imp %>%
   gather(Measure, Value, -(AccountNumber:Month)) %>%
   ggplot() +
   geom_line(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(aes(x = Month, y = Value + 1, col = Measure)) +
-  geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1)) +
+  geom_point(aes(x = Month, y = Value + 1, col = Measure), size = 0.75) +
+  geom_point(data = filter(no_use, AccountNumber %in% gas_investigate), aes(x = Month, y = 1), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   scale_y_continuous("Value", trans = "log10") +
   theme(legend.position = c(0, -0.075), legend.direction = "horizontal", legend.justification = c(0, 1)) +
@@ -781,8 +776,9 @@ eo88_imp <- eo88_imp %>%
 ```
 
 
+\newpage
 ### Data Imputation
-All remaining missing values have been flagged for imputation with random forest (25 values) or linear regression (672 values) models.  Each imputation method is implemented separately using the `mice` package.  The `AccountNumber` field is converted to a factor and included in the impuation predictor matrix -- this leads to the creation of an individual fit for each account.
+All remaining missing values have been flagged for imputation with random forest (25 values) or linear regression (672 values) models.  Each imputation method is implemented separately using the `mice` package.  The `AccountNumber` field is converted to a factor and included in the imputation predictor matrix -- this leads to the creation of an individual fit for each account.
 
 ```{r rf-prep}
 # find those needing rf
@@ -808,7 +804,12 @@ rf_data <- rf_data %>%
   select(-YearBuilt, -Type)
 ```
 
-For accounts containing values missing use, demand, and cost, reported data was joined with the National Climatic Data Center weather data, as well as variable building data fields.  When attempting random forest imputation, an error was returned related to computational singularity of the predictor matrix.  The correlation of the matrix revealed that the minimum temperature `TMIN` and maximum temperature `TMAX` were the most highly correlated variables; imputation was successful after removal of `TMAX`.
+For accounts containing values missing use, demand, and cost, reported data was joined with the National Climatic Data Center weather data, as well as variable building data fields.  When attempting random forest imputation, an error was returned related to computational singularity of the predictor matrix.  The correlation of the matrix revealed that the minimum temperature `TMIN` and maximum temperature `TMAX` were the most highly correlated variables (as shown below); imputation was successful after removal of `TMAX`.
+
+```{r weather-cor}
+corrplot::corrplot(cor(select(rf_data, -AccountNumber, -Use)), tl.col = "black", tl.cex = 0.9)
+```
+
 
 ```{r rf-imp}
 # for imputation, solve doesn't work due to highly correlated vars -- drop TMAX
@@ -875,7 +876,8 @@ reg_imp <- complete(reg_imp) %>%
   arrange(AccountNumber, Year, Month, Share)
 ```
 
-With imputation complete, inspection of samples of imputed values were inspected to confirm validity
+\newpage
+With imputation complete, inspection of samples of imputed values were inspected to confirm validity:
 ```{r gather-imp}
 rf_imp <- rf_data %>%
   left_join(rf_imp, by = c("AccountNumber", "Month", "Year", "Share"),
@@ -899,10 +901,10 @@ rf_plot <- rf_data %>%
   filter(AccountNumber %in% rf_accts[1:4]) %>% 
   mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
   ggplot(aes(x = Month, y = Use, col = "Reported")) +
-  geom_point() +
+  geom_point(size = 0.75) +
   geom_line() +
   geom_point(data = filter(rf_imp, AccountNumber %in% rf_accts[1:4]),
-             aes(x = Month, y = Use, col = "Imputed")) +
+             aes(x = Month, y = Use, col = "Imputed"), size = 0.75) +
   facet_wrap(~ AccountNumber, scales = "free") +
   labs(title = "Sample of values imputed with random forest", col = NULL) +
   scale_color_manual(values = c("Reported" = "black", "Imputed" = "red"))
@@ -911,12 +913,12 @@ reg_plot <- reg_data %>%
   mutate(Month = ymd(paste(Year, Month, "1", sep = "-"))) %>%
   filter(AccountNumber %in% reg_accts[c(1, 4, 5, 10)]) %>%
   ggplot(aes(x = Month)) +
-  geom_point(aes(y = Use + 1, col = "Use")) +
+  geom_point(aes(y = Use + 1, col = "Use"), size = 0.75) +
   geom_line(aes(y = Use + 1, col = "Use")) +
-  geom_point(aes(y = Cost + 1, col = "Cost")) +
+  geom_point(aes(y = Cost + 1, col = "Cost"), size = 0.75) +
   geom_line(aes(y = Cost + 1, col = "Cost")) +
   geom_point(data = filter(reg_imp, AccountNumber %in% reg_accts[c(1, 4, 5, 10)]),
-             aes(x = Month, y = Use + 1, col = "Imputed")) +
+             aes(x = Month, y = Use + 1, col = "Imputed"), size = 0.75) +
   scale_y_log10() +
   facet_wrap(~ AccountNumber, scales = "free") +
   labs(title = "Sample of values imputed with linear regression", col = NULL)
@@ -924,7 +926,7 @@ reg_plot <- reg_data %>%
 gridExtra::grid.arrange(rf_plot, reg_plot, ncol = 1)
 ```
 
-As both imputation methods appear to have returned reasonable values, these values were used to fill the missing values in the consumption data set.  The total use by calendar month (resulting from multiple bill cylces existing within a month) was calculated by multiplying the use by the share for each month and summing by month for each account number.
+As both imputation methods appear to have returned reasonable values, these values were used to fill the missing values in the consumption data set.  The total use by calendar month (resulting from multiple bill cycles existing within a month) was calculated by multiplying the use by the share for each month and summing by month for each account number.
 ```{r fill-na}
 # pull in imputed values from rf & reg to fill remaining NAs
 eo88_imp <- eo88_imp %>%
@@ -949,6 +951,7 @@ eo88_final <- eo88_imp %>%
 ```
 
 
+\newpage
 ## Data Management
 Data was written to a Microsoft SQL Server database to allow for analysis in the database or in other environments outside of R.  These include the following:
 
@@ -988,7 +991,6 @@ dbDisconnect(con)
 ```
 
 
-
 ## Performance Analysis
 The data, populated with imputed values, was used to calculate performance towards the EUI reduction targets of Executive Order 88.  This was initially attempted using the `dbplyr` and `dbplot` package to perform joins, visualizations, and calculations in the SQL Server database.  The transit time for these calculations were long, and the size of the tables used (roughly 170,000 rows for consumption data) made in-memory calculation feasible, so in-database calculations were abandoned.
 
@@ -996,7 +998,7 @@ The data, populated with imputed values, was used to calculate performance towar
 library(dbplyr)
 
 # connect to db
-con <- dbConnect(odbc(), Driver = "SQL Server", Server = getOption("ms_sql_server"), Database = "NYEMEO88")
+con <- dbConnect(odbc(), Driver = "SQL Server", Server = getOption("ms-sql-server"), Database = "NYEMEO88")
 
 # connect to relevant tables
 meta <- tbl(con, in_schema("EO88", "building_metadata"))
@@ -1039,7 +1041,7 @@ bsny_name_db <- full_db %>%
 
 # viz from db
 library(dbplot)
-bsny_name %>%
+bsny_name_db %>%
   dbplot_bar(SFY)
 ```
 
@@ -1049,7 +1051,7 @@ bsny_data <- eo88_final %>%
   left_join(bldg_meta) %>% 
   # MTA has not reported for SFY 2016-17; only one overlapping month
   filter(Agency != "MTA" | SFY != "2016-17") %>% 
-  group_by(Agency, Name, SFY) %>% 
+  group_by(Agency, ESPLocationID, Name, SFY) %>% 
   summarize(kBtu = sum(Use)) %>% 
   left_join(bldg_sfy) %>% 
   filter(Status == "included")
@@ -1112,53 +1114,150 @@ bsny_agency %>%
   geom_histogram(binwidth = 0.05, alpha = 0.5, col = "black") +
   scale_x_continuous(labels = scales::percent) +
   geom_vline(xintercept = -0.2, lty = 2, lwd = 1, col = "#006ba6") +
-  geom_vline(xintercept = 0, lty = 3, lwd = 0.5) +
-  labs()
+  geom_vline(xintercept = 0, lty = 3) +
+  labs(title = "Distribution of agency EUI reduction",
+       subtitle = "SFY 2016-17 vs. SFY 2010-11 baseline",
+       y = "Number of agencies", caption = "Excluding agency with 500% increase and 2 yet-to-report agencies")
 ```
 
+Six agencies showed a reduction of at least the required 20%, with an additional 12 agencies showing a reduction  from the baseline year.  The remaining agencies show a near-zero change or an increase in energy intensity since the baseline year.  Agency and state reduction by SFY were visualized jointly:
 
+```{r agency-state-plot}
+bsny_agency %>% 
+  ggplot() +
+  geom_line(aes(x = SFY, y = Reduction, group = Agency), alpha = 0.25) +
+  geom_point(data = bsny_state, aes(x = SFY, y = Reduction),
+             size = 2, col = "black") +
+  geom_line(data = bsny_state, aes(x = SFY, y = Reduction), group = 1,
+            lwd = 1, col = "black") +
+  geom_hline(yintercept = -0.2, lty = 2, lwd = 1, col = "#006ba6") +
+  geom_hline(yintercept = 0, lty = 3, col = "black") +
+  scale_y_continuous(labels = scales::percent, limits = c(-0.4, 0.4), oob = scales::squish) +
+  labs(title = "State & agency progress towards EO88 target",
+       subtitle = "For all agencies reporting through SFY 2016-17",
+       x = "State Fiscal Year", y = "Change in EUI")
+```
+
+Finally, the EUI reduction of each facility was visualized alongside the state performance -- while there is no facility-specific requirement for EUI reduction, this level of analysis may help the BuildSmart NY & NYEM teams identify facilities that may help improve agency or overall state reduction through energy efficiency efforts.
+```{r facility-state-plot}
+bsny_facility %>% 
+  ggplot() +
+  geom_line(aes(x = SFY, y = Reduction, group = ESPLocationID), lwd = 0.25, alpha = 0.1) +
+  geom_point(data = bsny_state, aes(x = SFY, y = Reduction),
+             size = 2, col = "black") +
+  geom_line(data = bsny_state, aes(x = SFY, y = Reduction), group = 1,
+            lwd = 1, col = "black") +
+  geom_hline(yintercept = -0.2, lty = 2, lwd = 1, col = "#006ba6") +
+  geom_hline(yintercept = 0, lty = 3, col = "black") +
+  scale_y_continuous(labels = scales::percent, limits = c(-0.6, 0.6)) +
+  labs(title = "State & facility progress towards EO88 target",
+       subtitle = "For all agencies reporting through SFY 2016-17",
+       x = "State Fiscal Year", y = "Change in EUI") +
+  theme(panel.grid.minor = element_blank())
+```
+
+This plot shows that there is a far greater variance in the performance of individual facilities than there is in the performance of agencies -- this is sensible, as the aggregation of individual facilities into an agency benchmark will naturally smooth some of the variance in facility performance.  A concentration of lines around the overall state performance can also be observed, indicating two things: first, overall state performance may be a reflection of macro trends that can also be observed at a more granular level; and second, there is a large concentration of performance (at the state and facility level) around zero.
+
+\newpage
 ### Analysis by Segments
+As outlined in the problem statement, the analysis of EUI reduction by building type and/or fuel type will be useful to the BuildSmart NY and NYEM teams.  To this end, EUI reduction by fuel of measure and primary building type were calculated and visualized:
+```{r fuel-type-plots}
+fuel_viz <- eo88_final %>%
+  left_join(bldg_meta) %>% 
+  filter(Agency != "MTA" | SFY != "2016-17") %>% 
+  group_by(Agency, Fuel, ESPLocationID, Name, SFY) %>% 
+  summarize(kBtu = sum(Use)) %>% 
+  left_join(bldg_sfy) %>% 
+  filter(Status == "included") %>% 
+  group_by(Fuel, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Fuel) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1) %>% 
+  filter(Fuel != "Fuel Oil # 1") %>% 
+  ggplot(aes(x = SFY, y = Reduction, group = Fuel, col = Fuel)) +
+  geom_line(show.legend = FALSE) +
+  scale_y_continuous("Change in EUI", limits = c(NA, 1), labels = scales::percent) +
+  ggtitle("EUI performance by fuel")
+
+type_viz <- eo88_final %>%
+  left_join(bldg_meta) %>% 
+  filter(Agency != "MTA" | SFY != "2016-17") %>% 
+  group_by(Agency, ESPLocationID, Name, SFY) %>% 
+  summarize(kBtu = sum(Use)) %>% 
+  left_join(bldg_sfy) %>% 
+  filter(Status == "included") %>% 
+  group_by(Type1, SFY) %>% 
+  summarize(kBtu = sum(kBtu), sf = sum(FloorArea),
+            EUI = kBtu / sf) %>% 
+  group_by(Type1) %>% 
+  mutate(Reduction = EUI / first(EUI) - 1) %>% 
+  ggplot(aes(x = SFY, y = Reduction, group = Type1, col = Type1)) +
+  geom_line(show.legend = FALSE) +
+  scale_y_continuous("Change in EUI", labels = scales::percent) +
+  ggtitle("EUI performance by primary building type")
+
+gridExtra::grid.arrange(fuel_viz, type_viz, ncol = 1)
+```
+
+Both plots show a large amount of noise and a significant number of different paths, making the information difficult to interpret.  To allow greater transparency & interactivity, a Tableau workbook was created.  The views within this workbook provide many ways of viewing the data: EO88 progress with drilldown capability into the agency \& facility performance; total EUI by Zip code per SFY; average use by fuel & facility type per month.  Example screenshots of these views are presented below:
+
+![Tableau View Screenshots](data/tableau-screenshots.png)
 
 
-## Future Improvements
+## Additional Considerations
+The Tableau views shown above have values that do not tie exactly to those calculated in R -- this is due to a difference in the mechanics of aggregation in both programs' functionalities.  If the Tableau dashboard is to be deployed as the method of data consumption by business users in the BuildSmart NY and NYEM teams, these values must be reconciled.  Additionally, many reported Zip codes are not recognized by Tableau; discussion with the NYEM team revealed that this is due to some State agencies having dedicated Zip codes, which must be related to physical Zip codes in order for informative mapping to be possible.
+
+Filed consumption data at the time of this report included 26 of 28 Affected State Agencies.  One of the remaining agencies has failed to report consumption in many years of EO88 and is not expected to file data.  The filing data for the remaining agency for SFY 2016-17 must be processed, imputed (if necessary), and its performance calculated.  This provides an opportunity to utilize the retroactive process illustrated by this project in a real-time workflow.  If successful, the data ingestion & transformation utilized may be operationalized by NYPA using data integration tools to automate the process.
+
+As mentioned in the *Data Cleansing: Initial Approach* section of this report, the data received was potentially modified through collaboration between the NYEM & BuildSmart NY teams, the software vendor, and reporting agencies from original reported values through methods not reflected in the reported data.  It will be essential to understand any processes used to modify any historical reported data for future implementation of this reporting.  Any changes made to data will need to be documented and accurately reflected in the data store of record to guarantee accuracy and defensibility of NYPA's EO88 reporting.
+
+Discussion with business stakeholders following production of the results presented in this report identified challenges faced by some agencies in meeting EO88 goals; future work will aim to alleviate these challenges.  The most universal of these challenges is the timeline to implement projects improving the energy efficiency (i.e. EUI) of buildings -- many energy efficiency projects require a number of years to complete (due largely to the scope, schedule, cost, and procurement requirements involved), leading to the impact of these projects not registering before the end of SFY 2019-20.  This may be addressed by crediting agencies for pledged energy efficiency reductions committed to prior to the end of the EO88 period.  This incorporation will be challenging, but may be relatively straightforward for projects implemented by NYPA.  Additionally, some agencies have constructed new facilities in response to increased need by their stakeholders -- the nature of these additional facilities (for example, construction of technologically-advanced laboratories) can often have an adverse affect on total source EUI.  A method for avoiding penalizing agencies for construction that supports Governor Cuomo's economic development goals may also be developed.  Finally, facilities that underwent energy efficiency improvements prior to the start of EO88 may be challenged to find additional opportunities to reduce EUI by 20%.  A method of identifying high-performing facilities in the baseline year (e.g. by comparing to Energy Star Portfolio Manager benchmarks) and excluding them from EO88 scoring may be implemented.
+
+All R code used to perform the analyses explained in this report, as well as the source code for this report, can be found online at https://github.com/dsmilo/DATA698.  The original data used are not provided for confidentiality concerns, but an anonymized version of the data is included in a compressed format.
+
 
 ## Acknowledgements
-Thank you to Honey Berk for her guidance in overcoming the myriad challenges encountered throughout the course of this project.  Thank you also to Gabe Cowles, Ryan Droege, Srini Pusuluri, Joe O'Connor, Julie Reardon, Prasad Surapaneni, and Godly Varghese for their assistance in the acquisition and understanding of the data used for this project.  
+Thank you to Honey Berk for her guidance in overcoming the myriad challenges encountered throughout the course of this project.  Thank you also to Nate Anctil, Emilie Bolduc, David Benjamin, Gabe Cowles, Ryan Droege, Srini Pusuluri, Joe O'Connor, Julie Reardon, Prasad Surapaneni, and Godly Varghese for their assistance in the acquisition, understanding, and deployment of the data used for this project.
 
 
 ## References
-Hadley Wickham (2017). tidyverse: Easily Install and Load the 'Tidyverse'. R package version 1.2.1. https://CRAN.R-project.org/package=tidyverse
+Augie, Baptiste (2017). *gridExtra: Miscellaneous Functions for "Grid" Graphics.* R package version 2.3. https://CRAN.R-project.org/package=gridExtra
 
-Hadley Wickham and Edgar Ruiz (2017). dbplyr: A 'dplyr' Back End for Databases. R package version 1.1.0.9000. https://github.com/tidyverse/dbplyr
+BuildSmart NY (2016).  *EO88 2016 Annual Report.* https://www.nypa.gov/-/media/nypa/documents/document-library/operations/eo88-annualreport-2016.pdf
 
-Jim Hester and Hadley Wickham (2017). odbc: Connect to ODBC Compatible Databases (using the DBI Interface). R package version 1.1.1.9000. https://github.com/rstats-db/odbc
+Cuomo, Governor Andrew M. (2012). *Executive Order No. 88: Directing State Agencies and Authorities to Improve the Energy Efficiency of State Buildings.* http://www.governor.ny.gov/news/no-88-directing-state-agencies-and-authorities-improve-energy-efficiency-state-buildings.
 
-R Special Interest Group on Databases (R-SIG-DB), Hadley Wickham and Kirill M?ller (2017). DBI: R Database Interface. R package version 0.7. https://CRAN.R-project.org/package=DBI
+Daróczi, Gergely & Tsegelskyi, Roman (2017). *pander: An R 'Pandoc' Writer.* R package version 0.6.1. https://CRAN.R-project.org/package=pander
 
-Stef van Buuren, Karin Groothuis-Oudshoorn (2011). mice: Multivariate Imputation by Chained Equations in R. Journal of Statistical Software, 45(3), 1-67. http://www.jstatsoft.org/v45/i03/.
+Energy Star Portfolio Manager (2013). *Technical Reference: Source Energy.* https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf
 
-Alexander Kowarik, Matthias Templ (2016). Imputation with the R Package VIM. Journal of Statistical Software, 74(7), 1-16. doi:10.18637/jss.v074.i07
+Energy Star Portfolio Manager (2015). *Technical Reference: Thermal Energy Conversions.* https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
 
-Gergely Dar?czi and Roman Tsegelskyi (2017). pander: An R 'Pandoc' Writer. R package version 0.6.1. https://CRAN.R-project.org/package=pander
+Grolemund, Garrett & Wickham, Hadley (2011). "Dates and Times Made Easy with lubridate." *Journal of Statistical Software*, 40(3), 1-25. URL http://www.jstatsoft.org/v40/i03/.
 
-Garrett Grolemund, Hadley Wickham (2011). Dates and Times Made Easy with lubridate. Journal of Statistical Software, 40(3), 1-25. URL http://www.jstatsoft.org/v40/i03/.
+Hester, Jim & Wickham, Hadley (2017). *odbc: Connect to ODBC Compatible Databases (using the DBI Interface).* R package version 1.1.1.9000. https://github.com/rstats-db/odbc
 
-Governor Andrew M. Cuomo (2012). Executive Order No. 88: Directing State Agencies and Authorities to Improve the Energy Efficiency of State Buildings. http://www.governor.ny.gov/news/no-88-directing-state-agencies-and-authorities-improve-energy-efficiency-state-buildings.
+Kowarik, Alexander & Templ, Matthias (2016). "Imputation with the R Package VIM." *Journal of Statistical Software*, 74(7), 1-16. doi:10.18637/jss.v074.i07
 
-Energy Star Portfolio Manager (2015). Technical Reference: Thermal Energy Conversions. https://portfoliomanager.energystar.gov/pdf/reference/Thermal%20Conversions.pdf
+Kuhn, Max (2017). *caret: Classification and Regression Training.* R package version 6.0-78. https://CRAN.R-project.org/package=caret
 
-Energy Star Portfolio Manager (2013). Technical Reference: Source Energy. https://portfoliomanager.energystar.gov/pdf/reference/Source%20Energy.pdf
+National Climatic Data Center (2017). *Divisional Data Select.* https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
 
-National Oceanic and Atmospheric Administration (2017). Divisional Data Select. https://www7.ncdc.noaa.gov/CDO/CDODivisionalSelect.jsp
+New York Power Authority (2017). *BuildSmart NY.* https://www.nypa.gov/innovation/programs/buildsmart-ny
 
-New York Power Authority (2017). BuildSmart NY. https://www.nypa.gov/innovation/programs/buildsmart-ny
+New York Power Authority (2017). *NY Energy Manager.* https://www.nypa.gov/services/digital-energy-services/ny-energy-manager
 
-New York Power Authority (2017). NY Energy Manager. https://www.nypa.gov/services/digital-energy-services/ny-energy-manager
+R Special Interest Group on Databases (R-SIG-DB), Wickham, Hadley & Müller, Kirill (2017). *DBI: R Database Interface.* R package version 0.7. https://CRAN.R-project.org/package=DBI
 
-BuildSmart NY (2016).  EO88 2016 Annual Report. https://www.nypa.gov/-/media/nypa/documents/document-library/operations/eo88-annualreport-2016.pdf
+Ruiz, Edgar (2017). *dbplot: Simplifies Plotting Data Inside Databases.* R package version 0.1.1. https://CRAN.R-project.org/package=dbplot
 
-Edgar Ruiz (2017). dbplot: Simplifies Plotting Data Inside Databases. R package version 0.1.1. https://CRAN.R-project.org/package=dbplot
+van Buuren, Stef & Groothuis-Oudshoorn, Karin (2011). "mice: Multivariate Imputation by Chained Equations in R." *Journal of Statistical Software*, 45(3), 1-67. http://www.jstatsoft.org/v45/i03/.
 
-Max Kuhn (2017). caret: Classification and Regression Training. R package version 6.0-78. https://CRAN.R-project.org/package=caret
+Wei, Taiyun & Simko, Viliam (2017). *R package "corrplot": Visualization of a Correlation Matrix (Version 0.84).* Available from https://github.com/taiyun/corrplot
 
-Taiyun Wei and Viliam Simko (2017). R package "corrplot": Visualization of a Correlation Matrix (Version 0.84). Available from https://github.com/taiyun/corrplot
+Wickham, Hadley (2017). *scales: Scale Functions for Visualization.* R package version 0.5.0. https://CRAN.R-project.org/package=scales
+
+Wickham, Hadley (2017). *tidyverse: Easily Install and Load the 'Tidyverse'.* R package version 1.2.1. https://CRAN.R-project.org/package=tidyverse
+
+Wickham, Hadley & Ruiz, Edgar (2017). *dbplyr: A 'dplyr' Back End for Databases.* R package version 1.1.0.9000. https://github.com/tidyverse/dbplyr
